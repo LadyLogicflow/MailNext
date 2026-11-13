@@ -294,6 +294,10 @@ tbody tr {
     display: none;
 }
 
+.warning-text {
+    color: var(--color-warning);
+}
+
 /* Responsive */
 @media (max-width: 768px) {
     header {
