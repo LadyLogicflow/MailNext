@@ -9,6 +9,7 @@ from flask import Blueprint, g, jsonify, request
 import abonnenten
 import betreiber_auth
 import db
+import import_csv
 import mandanten
 import newsletter
 from mandanten import Ungueltig
@@ -141,6 +142,70 @@ def abonnenten_liste(mandant_id):
     zeilen = abonnenten.liste(mandant_id)
     _audit("abonnenten_gelesen", "mandant=%s anzahl=%d" % (m["slug"], len(zeilen)))                 # enthält Adressen: darum protokolliert
     return jsonify({"abonnenten": zeilen, "kennzahlen": abonnenten.kennzahlen(mandant_id)})
+
+
+@bp.post("/mandanten/<int:mandant_id>/abonnenten/import")
+@betreiber_auth.betreiber_pflicht
+def abonnenten_import(mandant_id):
+    """Import von Bestandsadressen (Mailchimp-Export oder eine Adresse je Zeile). Body: daten (Text), quelle (1-100 Zeichen), nur_pruefen (bool), einwilligung_bestaetigt (Pflicht beim
+    echten Import), optional rolle und interessen (Werte aus dem Mandanten, gelten für alle Zeilen). Ins Audit kommen nur Zahlen und die Quelle, nie Adressen."""
+    m = _mandant_oder_404(mandant_id)
+    if m is None:
+        return jsonify({"error": "nicht_gefunden"}), 404
+    d = _json()
+    erlaubt = {"daten", "quelle", "nur_pruefen", "einwilligung_bestaetigt", "rolle", "interessen"}
+    if d is None or set(d) - erlaubt:
+        return _fehler("Bitte daten, quelle, nur_pruefen, einwilligung_bestaetigt, rolle und interessen als JSON senden.")
+    daten, quelle = d.get("daten"), d.get("quelle")
+    if not isinstance(daten, str) or not daten.strip():
+        return jsonify({"error": "daten_fehlen", "meldung": "Es wurden keine Daten übergeben."}), 400
+    if (not isinstance(quelle, str) or not 1 <= len(quelle.strip()) <= 100 or any(ord(ch) < 32 or ord(ch) == 127 for ch in quelle)):
+        return _fehler("Bitte eine Quelle angeben (1 bis 100 Zeichen, z. B. Mailchimp-Export vom 13.11.2026).")
+    nur_pruefen = d.get("nur_pruefen", False)
+    if not isinstance(nur_pruefen, bool):
+        return _fehler("nur_pruefen muss true oder false sein.")
+    if not nur_pruefen and d.get("einwilligung_bestaetigt") is not True:
+        return jsonify({"error": "einwilligung_nicht_bestaetigt", "meldung": "Bitte bestätigen, dass die Einwilligungen der Adressen vorliegen."}), 400
+    try:
+        ergebnis = abonnenten.importieren(m, daten, quelle.strip(), d.get("rolle"), d.get("interessen"), nur_pruefen)
+    except abonnenten.FormFehler as f:
+        return jsonify({"error": "eingabe_ungueltig", "feld": f.feld, "meldung": "Rolle oder Interessen gehören nicht zu diesem Mandanten."}), 400
+    except import_csv.ImportFehler as f:
+        return jsonify({"error": f.code, "meldung": f.meldung}), 400
+    _audit("abonnenten_import_geprueft" if nur_pruefen else "abonnenten_import",
+           "mandant=%s quelle=%s zeilen=%d neu=%d dublette=%d ungueltig=%d uebersprungen=%d zusammengefuehrt=%d" % (
+               m["slug"], quelle.strip(), ergebnis["zeilen"], ergebnis["neu"], ergebnis["dublette"], ergebnis["ungueltig"], ergebnis["uebersprungen_gesamt"], ergebnis["zusammengefuehrt"]))
+    return jsonify(ergebnis)
+
+
+@bp.get("/mandanten/<int:mandant_id>/abonnenten/tags")
+@betreiber_auth.betreiber_pflicht
+def abonnenten_tags(mandant_id):
+    """Vorhandene Tags dieses Mandanten mit Anzahl bestätigter Abonnentinnen (für die Auswahl; keine Adressen)."""
+    m = _mandant_oder_404(mandant_id)
+    if m is None:
+        return jsonify({"error": "nicht_gefunden"}), 404
+    tags = abonnenten.tags_liste(mandant_id)
+    _audit("tags_gelesen", "mandant=%s anzahl=%d" % (m["slug"], len(tags)))
+    return jsonify({"tags": tags})
+
+
+@bp.post("/mandanten/<int:mandant_id>/abonnenten/vorschau")
+@betreiber_auth.betreiber_pflicht
+def abonnenten_vorschau(mandant_id):
+    """Anzahl der Empfänger für ein Segment {rollen?, interessen?, tags?, tags_modus?}, ohne Entwurf. Body: {"segment": {...}}."""
+    m = _mandant_oder_404(mandant_id)
+    if m is None:
+        return jsonify({"error": "nicht_gefunden"}), 404
+    d = _json()
+    if d is None or set(d) - {"segment"}:
+        return _fehler("Bitte {\"segment\": {...}} senden.")
+    try:
+        v = newsletter.segment_anzahl(m, d.get("segment"))
+    except newsletter.Fehler as fehler:
+        return jsonify({"error": fehler.code, "meldung": fehler.meldung}), fehler.status
+    _audit("segment_vorschau", "mandant=%s anzahl=%d" % (m["slug"], v["anzahl"]))
+    return jsonify(v)
 
 
 # ----- Newsletter (Meilenstein B): Entwürfe, Testmail, Freigabe, Versand, Protokoll -----

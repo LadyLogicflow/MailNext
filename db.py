@@ -49,6 +49,10 @@ CREATE TABLE IF NOT EXISTS abonnent (
     token_hash TEXT,
     token_ablauf TEXT,
     nonce TEXT NOT NULL,
+    herkunft TEXT,
+    quelle TEXT,
+    import_am TEXT,
+    tags TEXT,
     UNIQUE(mandant_id, email_hmac)
 );
 -- Kurzlebig, nur für die Drosselung (HMAC statt Adresse, wird nach 2 Tagen gelöscht).
@@ -119,6 +123,10 @@ def init(pfad: str) -> None:
     with verbindung() as c:
         c.executescript(SCHEMA)
         c.execute("PRAGMA journal_mode=WAL")
+        vorhanden = {z["name"] for z in c.execute("PRAGMA table_info(abonnent)")}                # Datenbanken aus Fassungen vor dem Import
+        for spalte in ("herkunft", "quelle", "import_am", "tags"):
+            if spalte not in vorhanden:
+                c.execute("ALTER TABLE abonnent ADD COLUMN %s TEXT" % spalte)
 
 
 @contextmanager

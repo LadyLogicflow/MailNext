@@ -2,7 +2,7 @@
 import logging
 import os
 
-from flask import Flask, jsonify
+from flask import Flask, Request, jsonify
 
 import config
 import db
@@ -34,8 +34,22 @@ def _health_daten() -> tuple[dict, bool]:
     return daten, gesund
 
 
+IMPORT_MAX_BYTES = 3_500_000                                       # Import von Bestandsadressen (bis 20 000 Zeilen); alle anderen Aufrufe bleiben bei 300 000
+
+
+class _Anfrage(Request):
+    @property
+    def max_content_length(self):
+        return IMPORT_MAX_BYTES if self.endpoint == "betreiber.abonnenten_import" else 300000
+
+    @max_content_length.setter
+    def max_content_length(self, wert):
+        pass
+
+
 def create_app(db_pfad: str | None = None, versand_job: bool = False) -> Flask:
     app = Flask(__name__)
+    app.request_class = _Anfrage
     verz = config.daten_verzeichnis()
     if db_pfad is None:
         verz.mkdir(parents=True, exist_ok=True)

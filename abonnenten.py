@@ -8,6 +8,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 import db
+import import_csv
 import mailer
 import schluessel
 
@@ -204,5 +205,101 @@ def liste(mandant_id: int) -> list:
     with db.verbindung() as c:
         zeilen = c.execute("SELECT * FROM abonnent WHERE mandant_id=? AND status!='abgemeldet' ORDER BY id", (int(mandant_id),)).fetchall()
     return [{"id": z["id"], "email": z["email"], "status": z["status"], "rolle": z["rolle"], "interessen": json.loads(z["interessen"] or "[]"),
+             "tags": json.loads(z["tags"] or "[]"), "herkunft": z["herkunft"] or "formular", "quelle": z["quelle"],
              "einwilligung_version": z["einwilligung_version"], "einwilligung_am": z["angemeldet_am"], "bestaetigt_am": z["bestaetigt_am"]}
             for z in zeilen]
+
+
+# ----- Import von Bestandsadressen (Betreiber, Einwilligungen liegen laut Betreiber vor) -----
+
+def _tags_vereinigen(alt: list, neu: list) -> list:
+    """Vereinigung ohne Groß-/Kleinschreibung (die vorhandene Schreibweise bleibt), höchstens MAX_TAGS_JE_ADRESSE."""
+    ergebnis = list(alt)
+    bekannt = {t.lower() for t in alt}
+    for t in neu:
+        if t.lower() not in bekannt and len(ergebnis) < import_csv.MAX_TAGS_JE_ADRESSE:
+            ergebnis.append(t)
+            bekannt.add(t.lower())
+    return ergebnis
+
+
+def importieren(mandant: dict, daten: str, quelle: str, rolle=None, interessen=None, nur_pruefen: bool = False) -> dict:
+    """Importiert Adressen als sofort bestätigte Abonnentinnen (Herkunft 'import', Datum und Quelle gespeichert), ohne Bestätigungsmail.
+    Abgemeldete, unzustellbare und unbestätigte Adressen werden NIE verändert. Bei bekannter bestätigter Adresse werden Interessen und Tags vereinigt und die Rolle nur gesetzt,
+    wenn noch keine da ist. ``nur_pruefen`` rechnet alles durch und speichert nichts. Wirft FormFehler (Auswahl) oder import_csv.ImportFehler.
+    Antwort: nur Zahlen und Tag-Namen, nie Adressen."""
+    rolle, interessen = _auswahl_pruefen(mandant, rolle, interessen)
+    zeilen = import_csv.lesen(daten)
+    mid = mandant["id"]
+    jetzt = _iso(_jetzt())
+    z = {"nur_pruefen": bool(nur_pruefen), "zeilen": len(zeilen), "neu": 0, "dublette": 0, "ungueltig": 0, "zusammengefuehrt": 0, "rolle_konflikt": 0,
+         "uebersprungen": {"abgemeldet": 0, "unzustellbar": 0, "unbestaetigt": 0, "status": 0}}
+    tag_zaehler: dict = {}
+    tags_verworfen = 0
+    with db.verbindung() as c:
+        vorhanden = {r["email_hmac"]: dict(r) for r in c.execute("SELECT id, email_hmac, status, rolle, interessen, tags FROM abonnent WHERE mandant_id=?", (mid,))}
+        gesehen = set()
+        for adresse, status, tag_zelle in zeilen:
+            if status is not None and status not in import_csv.STATUS_ABONNIERT:
+                z["uebersprungen"]["status"] += 1
+                continue
+            email = schluessel.normalisiere_email(adresse)
+            if not schluessel.email_gueltig(email):
+                z["ungueltig"] += 1
+                continue
+            h = schluessel.email_hmac(mid, email)
+            if h in gesehen:
+                z["dublette"] += 1
+                continue
+            gesehen.add(h)
+            tags, verworfen = import_csv.tags_lesen(tag_zelle) if tag_zelle else ([], 0)
+            tags_verworfen += verworfen
+            for t in tags:
+                tag_zaehler[t] = tag_zaehler.get(t, 0) + 1
+            v = vorhanden.get(h)
+            if v is None:
+                z["neu"] += 1
+                if not nur_pruefen:
+                    c.execute("INSERT INTO abonnent(mandant_id, email_hmac, status, email, rolle, interessen, tags, einwilligung_version, angemeldet_am, bestaetigt_am, ip, token_hash, "
+                              "token_ablauf, nonce, herkunft, quelle, import_am) VALUES (?,?,'bestaetigt',?,?,?,?,'import',?,?,NULL,NULL,NULL,?,'import',?,?)",
+                              (mid, h, email, rolle, json.dumps(interessen), json.dumps(tags), jetzt, jetzt, schluessel.neue_nonce(), quelle, jetzt))
+                continue
+            if v["status"] == "bestaetigt":
+                z["dublette"] += 1
+                alte_interessen = json.loads(v["interessen"] or "[]")
+                neue_interessen = sorted(set(alte_interessen) | set(interessen))
+                alte_tags = json.loads(v["tags"] or "[]")
+                neue_tags = _tags_vereinigen(alte_tags, tags)
+                neue_rolle = v["rolle"]
+                if rolle and v["rolle"] is None:
+                    neue_rolle = rolle
+                elif rolle and v["rolle"] != rolle:
+                    z["rolle_konflikt"] += 1
+                if neue_interessen != sorted(alte_interessen) or neue_tags != alte_tags or neue_rolle != v["rolle"]:
+                    z["zusammengefuehrt"] += 1
+                    if not nur_pruefen:
+                        c.execute("UPDATE abonnent SET rolle=?, interessen=?, tags=? WHERE id=? AND mandant_id=?",
+                                  (neue_rolle, json.dumps(neue_interessen), json.dumps(neue_tags), v["id"], mid))
+                continue
+            schluessel_status = {"abgemeldet": "abgemeldet", "unzustellbar": "unzustellbar"}.get(v["status"], "unbestaetigt")
+            z["uebersprungen"][schluessel_status] += 1
+    z["uebersprungen_gesamt"] = sum(z["uebersprungen"].values())
+    haeufigste = sorted(tag_zaehler.items(), key=lambda kv: (-kv[1], kv[0].lower()))
+    z["tags"] = {"verschiedene": len(tag_zaehler), "haeufigste": [{"tag": t, "anzahl": n} for t, n in haeufigste[:50]], "verworfen": tags_verworfen}
+    z["kennzahlen"] = kennzahlen(mid)
+    return z
+
+
+def tags_liste(mandant_id: int) -> list:
+    """Vorhandene Tags der bestätigten Abonnentinnen eines Mandanten mit Anzahl (ohne Groß-/Kleinschreibung zusammengefasst, häufigste Schreibweise). Keine Adressen."""
+    zaehler: dict = {}
+    schreibweisen: dict = {}
+    with db.verbindung() as c:
+        for z in c.execute("SELECT tags FROM abonnent WHERE mandant_id=? AND status='bestaetigt' AND tags IS NOT NULL AND tags!='[]'", (int(mandant_id),)):
+            for t in json.loads(z["tags"] or "[]"):
+                k = t.lower()
+                zaehler[k] = zaehler.get(k, 0) + 1
+                schreibweisen.setdefault(k, {}).setdefault(t, 0)
+                schreibweisen[k][t] += 1
+    liste = [{"tag": max(schreibweisen[k].items(), key=lambda kv: (kv[1], kv[0]))[0], "anzahl": n} for k, n in zaehler.items()]
+    return sorted(liste, key=lambda e: (-e["anzahl"], e["tag"].lower()))

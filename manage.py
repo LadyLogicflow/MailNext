@@ -6,6 +6,8 @@
     python manage.py versand <slug> aus|datei            (smtp nur über die Betreiber-Schnittstelle, Passwörter nie in der Kommandozeile)
     python manage.py liste                               (Mandanten mit Zahlen)
     python manage.py abonnenten <slug>                   (Adressen und Status dieses Mandanten)
+    python manage.py import <slug> <datei.csv> "<Quelle>" [nur-pruefen] [einwilligung-liegt-vor] [rolle=<Wert>] [interessen=<Wert,Wert>]
+                                                         (Bestandsadressen aus einem Mailchimp-Export; ohne einwilligung-liegt-vor nur Prüfung, es wird nichts gespeichert)
 
 Braucht MAILNEXT_HAUPTSCHLUESSEL und MAILNEXT_DATEN wie der Dienst. Jede Aktion steht im Audit-Log (Akteur 'manage')."""
 import json
@@ -14,6 +16,7 @@ import sys
 import abonnenten
 import config
 import db
+import import_csv
 import mandanten
 
 
@@ -33,6 +36,49 @@ def _mandant(slug: str) -> dict:
 def _datei(pfad: str) -> dict:
     with open(pfad, encoding="utf-8") as f:
         return json.load(f)
+
+
+def _text(pfad: str) -> str:
+    """Datei lesen: UTF-8 (mit oder ohne BOM), sonst Windows-1252 (Excel)."""
+    roh = open(pfad, "rb").read()
+    try:
+        return roh.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return roh.decode("cp1252", errors="replace")
+
+
+def _import(rest: list) -> int:
+    m = _mandant(rest[0])
+    optionen = rest[3:]
+    echt = "einwilligung-liegt-vor" in optionen and "nur-pruefen" not in optionen
+    rolle = next((o.split("=", 1)[1] for o in optionen if o.startswith("rolle=")), None)
+    interessen = next((o.split("=", 1)[1].split(",") for o in optionen if o.startswith("interessen=")), None)
+    if not 1 <= len(rest[2].strip()) <= 100:
+        print("Fehler: Die Quelle muss 1 bis 100 Zeichen haben.")
+        return 1
+    try:
+        e = abonnenten.importieren(m, _text(rest[1]), rest[2].strip(), rolle, interessen, nur_pruefen=not echt)
+    except abonnenten.FormFehler:
+        print("Fehler: Rolle oder Interessen gehören nicht zu diesem Mandanten.")
+        return 1
+    except import_csv.ImportFehler as f:
+        print("Fehler: %s" % f.meldung)
+        return 1
+    except OSError:
+        print("Fehler: Die Datei kann nicht gelesen werden.")
+        return 1
+    db.audit("manage", "abonnenten_import" if echt else "abonnenten_import_geprueft",
+             "mandant=%s quelle=%s zeilen=%d neu=%d dublette=%d ungueltig=%d uebersprungen=%d zusammengefuehrt=%d" % (
+                 m["slug"], rest[2].strip(), e["zeilen"], e["neu"], e["dublette"], e["ungueltig"], e["uebersprungen_gesamt"], e["zusammengefuehrt"]))
+    print("%s: %d Zeilen, neu %d, Dubletten %d (zusammengeführt %d, Rolle abweichend %d), ungültig %d, übersprungen %d (abgemeldet %d, unzustellbar %d, unbestätigt %d, Status %d)" % (
+        "IMPORTIERT" if echt else "PRÜFUNG (nichts gespeichert)", e["zeilen"], e["neu"], e["dublette"], e["zusammengefuehrt"], e["rolle_konflikt"], e["ungueltig"],
+        e["uebersprungen_gesamt"], e["uebersprungen"]["abgemeldet"], e["uebersprungen"]["unzustellbar"], e["uebersprungen"]["unbestaetigt"], e["uebersprungen"]["status"]))
+    if e["tags"]["verschiedene"]:
+        print("Tags: %d verschiedene, häufigste: %s%s" % (e["tags"]["verschiedene"], ", ".join("%s (%d)" % (t["tag"], t["anzahl"]) for t in e["tags"]["haeufigste"][:10]),
+                                                         (", verworfen: %d" % e["tags"]["verworfen"]) if e["tags"]["verworfen"] else ""))
+    if not echt:
+        print("Zum echten Import 'einwilligung-liegt-vor' anhängen (und 'nur-pruefen' weglassen).")
+    return 0
 
 
 def main(argv: list) -> int:
@@ -70,6 +116,8 @@ def main(argv: list) -> int:
             db.audit("manage", "abonnenten_gelesen", "mandant=%s anzahl=%d" % (m["slug"], len(zeilen)))
             for z in zeilen:
                 print("%-8s %s" % (z["status"], z["email"]))
+        elif befehl == "import" and len(rest) >= 3:
+            return _import(rest)
         else:
             print(__doc__)
             return 2

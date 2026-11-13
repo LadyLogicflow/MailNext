@@ -89,8 +89,8 @@ def _hash(betreff, text, ziel, segment) -> str:
 
 def _segment_pruefen(mandant: dict, segment) -> dict:
     segment = segment or {}
-    if not isinstance(segment, dict) or set(segment) - {"rollen", "interessen"}:
-        raise Fehler("segment_ungueltig", "segment darf nur rollen und interessen enthalten", 400)
+    if not isinstance(segment, dict) or set(segment) - {"rollen", "interessen", "tags", "tags_modus"}:
+        raise Fehler("segment_ungueltig", "segment darf nur rollen, interessen, tags und tags_modus enthalten", 400)
     ergebnis = {}
     for feld, erlaubt in (("rollen", {e["wert"] for e in mandant["design"]["rollen"]}),
                           ("interessen", {e["wert"] for e in mandant["design"]["interessen"]})):
@@ -101,6 +101,22 @@ def _segment_pruefen(mandant: dict, segment) -> dict:
         if not isinstance(werte, list) or not werte or any(not isinstance(w, str) or w not in erlaubt for w in werte):
             raise Fehler("segment_ungueltig", "%s: unbekannter oder leerer Wert" % feld, 400)
         ergebnis[feld] = sorted(set(werte))
+    tags = segment.get("tags")
+    if tags is not None:
+        # Tags sind frei vergeben (Import): erlaubt sind die Tags, die bei bestätigten Abonnentinnen dieses Mandanten vorkommen (Schreibweise wie dort).
+        if not isinstance(tags, list) or not tags or len(tags) > 20 or any(not isinstance(t, str) for t in tags):
+            raise Fehler("segment_ungueltig", "tags: leer, zu viele (höchstens 20) oder kein Text", 400)
+        import abonnenten
+        vorhanden = {e["tag"].lower(): e["tag"] for e in abonnenten.tags_liste(mandant["id"])}
+        if any(t.strip().lower() not in vorhanden for t in tags):
+            raise Fehler("segment_ungueltig", "tags: unbekannter Tag", 400)
+        ergebnis["tags"] = sorted({vorhanden[t.strip().lower()] for t in tags})
+        modus = segment.get("tags_modus", "oder")
+        if modus not in ("oder", "und"):
+            raise Fehler("segment_ungueltig", "tags_modus muss oder oder und sein", 400)
+        ergebnis["tags_modus"] = modus
+    elif segment.get("tags_modus") is not None:
+        raise Fehler("segment_ungueltig", "tags_modus gehört nur zusammen mit tags", 400)
     return ergebnis
 
 
@@ -221,7 +237,7 @@ def _empfaenger_ermitteln(mandant: dict, z) -> list:
         return [("t" + schluessel.email_hmac(mandant["id"], a), None, a) for a in testliste(mandant)]
     segment = json.loads(z["segment"])
     with db.verbindung() as c:
-        zeilen = c.execute("SELECT id, email, rolle, interessen FROM abonnent WHERE mandant_id=? AND status='bestaetigt' AND email IS NOT NULL ORDER BY id",
+        zeilen = c.execute("SELECT id, email, rolle, interessen, tags FROM abonnent WHERE mandant_id=? AND status='bestaetigt' AND email IS NOT NULL ORDER BY id",
                            (mandant["id"],)).fetchall()
     ergebnis = []
     for r in zeilen:
@@ -229,8 +245,20 @@ def _empfaenger_ermitteln(mandant: dict, z) -> list:
             continue
         if segment.get("interessen") and not set(json.loads(r["interessen"] or "[]")) & set(segment["interessen"]):
             continue
+        if segment.get("tags"):
+            gewaehlt = {t.lower() for t in segment["tags"]}
+            hat = {t.lower() for t in json.loads(r["tags"] or "[]")}
+            if not (gewaehlt <= hat if segment.get("tags_modus") == "und" else gewaehlt & hat):
+                continue
         ergebnis.append(("a%d" % r["id"], r["id"], r["email"]))
     return ergebnis
+
+
+def segment_anzahl(mandant: dict, segment) -> dict:
+    """Wie viele bestätigte Abonnentinnen würde dieses Segment treffen (ohne Entwurf, für die Auswahl in der Oberfläche). Wirft Fehler bei ungültigem Segment."""
+    geprueft = _segment_pruefen(mandant, segment)
+    z = {"ziel": "alle", "segment": json.dumps(geprueft)}
+    return {"anzahl": len(_empfaenger_ermitteln(mandant, z)), "segment": geprueft}
 
 
 def vorschau(mandant: dict, entwurf_id: int) -> dict:
