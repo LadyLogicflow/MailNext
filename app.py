@@ -7,6 +7,8 @@ from flask import Flask, jsonify
 import config
 import db
 import einstellungen
+import betreiber
+import public
 
 
 def _health_daten() -> tuple[dict, bool]:
@@ -37,6 +39,18 @@ def create_app(db_pfad: str | None = None) -> Flask:
         verz.mkdir(parents=True, exist_ok=True)
         db_pfad = str(verz / "mailnext.db")
     db.init(db_pfad)
+
+    app.config["MAX_CONTENT_LENGTH"] = 20000
+    app.register_blueprint(public.bp)
+    app.register_blueprint(betreiber.bp)
+
+    @app.errorhandler(einstellungen.HauptschluesselFehlt)
+    def _nicht_bereit(_):
+        return jsonify({"error": "nicht_bereit", "meldung": "Der Dienst ist nicht vollständig eingerichtet."}), 503
+
+    @app.errorhandler(413)
+    def _zu_gross(_):
+        return jsonify({"error": "zu_gross"}), 413
 
     @app.get("/health")
     def health():

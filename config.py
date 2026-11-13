@@ -30,3 +30,21 @@ def hauptschluessel() -> str | None:
     if len(wert) < HAUPTSCHLUESSEL_MIN_LAENGE:
         return None
     return wert
+
+
+def basis_url() -> str:
+    """Öffentliche Adresse von MailNext (für Links in Mails). Je Mandant überschreibbar (design.basis_url)."""
+    return os.environ.get("MAILNEXT_BASIS_URL", "https://mailnext.bst-next.de").rstrip("/")
+
+
+def proxy_anzahl() -> int:
+    """Wie vielen vorgeschalteten Proxys (Coolify/Traefik) für X-Forwarded-For vertraut wird. 0 = Adresse der Verbindung."""
+    try:
+        return max(0, int(os.environ.get("MAILNEXT_PROXIES", "1")))
+    except ValueError:
+        return 1
+
+
+def ausgang_verzeichnis() -> Path:
+    """Ablage für Mails im Modus 'datei' (Test auf dem Pi, ohne echten Versand)."""
+    return daten_verzeichnis() / "ausgang"

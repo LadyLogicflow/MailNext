@@ -14,6 +14,52 @@ CREATE TABLE IF NOT EXISTS einstellung (
     geaendert_am TEXT NOT NULL,
     geaendert_von TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS mandant (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    slug TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    aktiv INTEGER NOT NULL DEFAULT 1,
+    design TEXT NOT NULL DEFAULT '{}',
+    erstellt TEXT NOT NULL,
+    geaendert TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS einwilligung (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    mandant_id INTEGER NOT NULL REFERENCES mandant(id),
+    version TEXT NOT NULL,
+    text TEXT NOT NULL,
+    sha256 TEXT NOT NULL,
+    gueltig_ab TEXT NOT NULL,
+    UNIQUE(mandant_id, version)
+);
+-- Eine Zeile je Person und Mandant. Nach der Abmeldung bleibt nur der Minimaldatensatz (email NULL, email_hmac, Zeitpunkte).
+CREATE TABLE IF NOT EXISTS abonnent (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    mandant_id INTEGER NOT NULL REFERENCES mandant(id),
+    email TEXT,
+    email_hmac TEXT NOT NULL,
+    status TEXT NOT NULL,
+    rolle TEXT,
+    interessen TEXT,
+    einwilligung_version TEXT,
+    angemeldet_am TEXT NOT NULL,
+    bestaetigt_am TEXT,
+    abgemeldet_am TEXT,
+    ip TEXT,
+    token_hash TEXT,
+    token_ablauf TEXT,
+    nonce TEXT NOT NULL,
+    UNIQUE(mandant_id, email_hmac)
+);
+-- Kurzlebig, nur für die Drosselung (HMAC statt Adresse, wird nach 2 Tagen gelöscht).
+CREATE TABLE IF NOT EXISTS anmelde_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    mandant_id INTEGER NOT NULL,
+    email_hmac TEXT NOT NULL,
+    ip TEXT NOT NULL,
+    zeit TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_anmelde_log_zeit ON anmelde_log(mandant_id, zeit);
 CREATE TABLE IF NOT EXISTS audit_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     zeit TEXT NOT NULL,
