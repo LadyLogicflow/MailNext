@@ -1064,7 +1064,7 @@ async function renderAbonnenten(m) {
         const table = document.createElement('table');
         const thead = document.createElement('thead');
         const headerRow = document.createElement('tr');
-        ['E-Mail', 'Status', 'Rolle', 'Interessen', 'Angemeldet'].forEach(h => {
+        ['E-Mail', 'Status', 'Rolle', 'Interessen', 'Tags', 'Herkunft', 'Quelle', 'Angemeldet'].forEach(h => {
             const th = document.createElement('th');
             th.textContent = h;
             headerRow.appendChild(th);
@@ -1097,6 +1097,18 @@ async function renderAbonnenten(m) {
             const interessenCell = document.createElement('td');
             interessenCell.textContent = (a.interessen || []).join(', ') || '-';
             row.appendChild(interessenCell);
+
+            const tagsCell = document.createElement('td');
+            tagsCell.textContent = (a.tags || []).join(', ') || '-';
+            row.appendChild(tagsCell);
+
+            const herkunftCell = document.createElement('td');
+            herkunftCell.textContent = a.herkunft || '-';
+            row.appendChild(herkunftCell);
+
+            const quelleCell = document.createElement('td');
+            quelleCell.textContent = a.quelle || '-';
+            row.appendChild(quelleCell);
 
             const dateCell = document.createElement('td');
             dateCell.textContent = a.einwilligung_am ? new Date(a.einwilligung_am).toLocaleDateString('de-DE') : '-';
