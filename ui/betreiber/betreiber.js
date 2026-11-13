@@ -286,11 +286,16 @@ function renderMandantAnlegen() {
 }
 
 // Mandant Details + Design (Schritt 2 - Basis-Version)
-async function showMandantDetails(mandantId) {
+async function showMandantDetails(mandantId, tab = 'details') {
     try {
         const m = await apiCall(`/mandanten/${mandantId}`);
         state.currentMandant = m;
-        renderMandantDetails(m);
+        state.currentTab = tab;
+        if (tab === 'abonnenten') {
+            renderAbonnenten(m);
+        } else {
+            renderMandantDetails(m);
+        }
     } catch (err) {
         showToast(err.message, 'error');
     }
@@ -304,6 +309,24 @@ function renderMandantDetails(m) {
     const title = document.createElement('h2');
     title.textContent = m.name;
     card.appendChild(title);
+
+    // Tabs
+    const tabsNav = document.createElement('div');
+    tabsNav.style.marginBottom = '1.5rem';
+    tabsNav.style.borderBottom = '1px solid var(--color-border)';
+    ['details', 'abonnenten'].forEach(tab => {
+        const btn = document.createElement('button');
+        btn.textContent = tab === 'details' ? 'Einstellungen' : 'Abonnenten';
+        btn.style.padding = '0.5rem 1rem';
+        btn.style.background = 'none';
+        btn.style.border = 'none';
+        btn.style.borderBottom = state.currentTab === tab ? '2px solid var(--color-primary)' : '2px solid transparent';
+        btn.style.cursor = 'pointer';
+        btn.style.fontWeight = state.currentTab === tab ? '600' : 'normal';
+        btn.addEventListener('click', () => showMandantDetails(m.id, tab));
+        tabsNav.appendChild(btn);
+    });
+    card.appendChild(tabsNav);
 
     const errorDiv = document.createElement('div');
     errorDiv.className = 'error hidden';
@@ -647,6 +670,131 @@ function renderMandantDetails(m) {
 
     main.innerHTML = '';
     main.appendChild(card);
+}
+
+// Abonnenten (Schritt 3)
+async function renderAbonnenten(m) {
+    const main = document.getElementById('main');
+    const card = document.createElement('div');
+    card.className = 'card';
+
+    const title = document.createElement('h2');
+    title.textContent = m.name;
+    card.appendChild(title);
+
+    // Tabs (wie in renderMandantDetails)
+    const tabsNav = document.createElement('div');
+    tabsNav.style.marginBottom = '1.5rem';
+    tabsNav.style.borderBottom = '1px solid var(--color-border)';
+    ['details', 'abonnenten'].forEach(tab => {
+        const btn = document.createElement('button');
+        btn.textContent = tab === 'details' ? 'Einstellungen' : 'Abonnenten';
+        btn.style.padding = '0.5rem 1rem';
+        btn.style.background = 'none';
+        btn.style.border = 'none';
+        btn.style.borderBottom = state.currentTab === tab ? '2px solid var(--color-primary)' : '2px solid transparent';
+        btn.style.cursor = 'pointer';
+        btn.style.fontWeight = state.currentTab === tab ? '600' : 'normal';
+        btn.addEventListener('click', () => showMandantDetails(m.id, tab));
+        tabsNav.appendChild(btn);
+    });
+    card.appendChild(tabsNav);
+
+    const loadingDiv = document.createElement('div');
+    loadingDiv.className = 'loading';
+    loadingDiv.textContent = 'Lade Abonnenten...';
+    card.appendChild(loadingDiv);
+
+    main.innerHTML = '';
+    main.appendChild(card);
+
+    try {
+        const data = await apiCall(`/mandanten/${m.id}/abonnenten`);
+        loadingDiv.remove();
+
+        // Kennzahlen
+        const stats = data.kennzahlen || {};
+        const statsDiv = document.createElement('div');
+        statsDiv.style.display = 'grid';
+        statsDiv.style.gridTemplateColumns = 'repeat(4, 1fr)';
+        statsDiv.style.gap = '1rem';
+        statsDiv.style.marginBottom = '1.5rem';
+        [{label: 'Bestätigt', value: stats.bestaetigt || 0, color: 'success'},
+         {label: 'Unbestätigt', value: stats.unbestaetigt || 0, color: 'warning'},
+         {label: 'Abgemeldet', value: stats.abgemeldet || 0, color: 'error'},
+         {label: 'Unzustellbar', value: stats.unzustellbar || 0, color: 'error'}
+        ].forEach(s => {
+            const box = document.createElement('div');
+            box.style.padding = '1rem';
+            box.style.background = '#f9fafb';
+            box.style.borderRadius = '6px';
+            box.style.textAlign = 'center';
+            const num = document.createElement('div');
+            num.style.fontSize = '2rem';
+            num.style.fontWeight = '700';
+            num.textContent = s.value;
+            box.appendChild(num);
+            const lbl = document.createElement('div');
+            lbl.style.fontSize = '0.875rem';
+            lbl.style.color = '#6b7280';
+            lbl.textContent = s.label;
+            box.appendChild(lbl);
+            statsDiv.appendChild(box);
+        });
+        card.appendChild(statsDiv);
+
+        // Tabelle
+        const table = document.createElement('table');
+        const thead = document.createElement('thead');
+        const headerRow = document.createElement('tr');
+        ['E-Mail', 'Status', 'Rolle', 'Interessen', 'Angemeldet'].forEach(h => {
+            const th = document.createElement('th');
+            th.textContent = h;
+            headerRow.appendChild(th);
+        });
+        thead.appendChild(headerRow);
+        table.appendChild(thead);
+
+        const tbody = document.createElement('tbody');
+        (data.abonnenten || []).forEach(a => {
+            const row = document.createElement('tr');
+
+            const emailCell = document.createElement('td');
+            emailCell.textContent = a.email || '(pseudonymisiert)';
+            row.appendChild(emailCell);
+
+            const statusCell = document.createElement('td');
+            const badge = document.createElement('span');
+            badge.className = 'badge';
+            if (a.bestaetigt_am) badge.classList.add('badge-success');
+            else if (a.abgemeldet_am) badge.classList.add('badge-error');
+            else if (a.unzustellbar) badge.classList.add('badge-error');
+            else badge.classList.add('badge-warning');
+            badge.textContent = a.bestaetigt_am ? 'Bestätigt' : a.abgemeldet_am ? 'Abgemeldet' : a.unzustellbar ? 'Unzustellbar' : 'Unbestätigt';
+            statusCell.appendChild(badge);
+            row.appendChild(statusCell);
+
+            const rolleCell = document.createElement('td');
+            rolleCell.textContent = a.rolle || '-';
+            row.appendChild(rolleCell);
+
+            const interessenCell = document.createElement('td');
+            interessenCell.textContent = (a.interessen || []).join(', ') || '-';
+            row.appendChild(interessenCell);
+
+            const dateCell = document.createElement('td');
+            dateCell.textContent = a.angemeldet_am ? new Date(a.angemeldet_am).toLocaleDateString('de-DE') : '-';
+            row.appendChild(dateCell);
+
+            tbody.appendChild(row);
+        });
+        table.appendChild(tbody);
+        card.appendChild(table);
+
+    } catch (err) {
+        loadingDiv.textContent = 'Fehler: ' + err.message;
+        loadingDiv.style.color = 'var(--color-error)';
+    }
 }
 
 // Initialisierung
