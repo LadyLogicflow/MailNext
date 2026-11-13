@@ -62,6 +62,9 @@ function showView(view) {
         case 'anlegen':
             renderMandantAnlegen();
             break;
+        case 'einstellungen':
+            renderEinstellungen();
+            break;
         default:
             renderMandantenListe();
     }
@@ -73,7 +76,8 @@ function renderNav() {
 
     const buttons = [
         { id: 'liste', label: 'Mandanten' },
-        { id: 'anlegen', label: 'Neuer Mandant' }
+        { id: 'anlegen', label: 'Neuer Mandant' },
+        { id: 'einstellungen', label: 'Einstellungen' }
     ];
 
     buttons.forEach(btn => {
@@ -297,6 +301,8 @@ async function showMandantDetails(mandantId, tab = 'details') {
             renderNewsletter(m);
         } else if (tab === 'import') {
             renderImport(m);
+        } else if (tab === 'ki') {
+            renderMandantKI(m);
         } else {
             renderMandantDetails(m);
         }
@@ -309,7 +315,7 @@ function renderTabs(m, card) {
     const tabsNav = document.createElement('div');
     tabsNav.style.marginBottom = '1.5rem';
     tabsNav.style.borderBottom = '1px solid var(--color-border)';
-    const tabs = [{id: 'details', label: 'Einstellungen'}, {id: 'versand', label: 'Versand'}, {id: 'newsletter', label: 'Newsletter'}, {id: 'abonnenten', label: 'Abonnenten'}, {id: 'import', label: 'Import'}];
+    const tabs = [{id: 'details', label: 'Einstellungen'}, {id: 'versand', label: 'Versand'}, {id: 'newsletter', label: 'Newsletter'}, {id: 'abonnenten', label: 'Abonnenten'}, {id: 'import', label: 'Import'}, {id: 'ki', label: 'KI'}];
     tabs.forEach(tab => {
         const btn = document.createElement('button');
         btn.textContent = tab.label;
@@ -808,6 +814,219 @@ async function renderVersand(m) {
     main.appendChild(card);
 }
 
+// Einstellungen (global)
+async function renderEinstellungen() {
+    const main = document.getElementById('main');
+    const card = document.createElement('div');
+    card.className = 'card';
+
+    const title = document.createElement('h2');
+    title.textContent = 'Einstellungen';
+    card.appendChild(title);
+
+    // KI-Zugang
+    const kiSection = document.createElement('div');
+    kiSection.style.marginTop = '2rem';
+    const kiTitle = document.createElement('h3');
+    kiTitle.textContent = 'KI-Zugang';
+    kiSection.appendChild(kiTitle);
+
+    const kiForm = document.createElement('form');
+    kiForm.id = 'ki-form';
+
+    const kiGroup = document.createElement('div');
+    kiGroup.className = 'form-group';
+    const kiLabel = document.createElement('label');
+    kiLabel.textContent = 'API-Schlüssel (Claude)';
+    kiGroup.appendChild(kiLabel);
+    const kiInput = document.createElement('input');
+    kiInput.type = 'password';
+    kiInput.id = 'ki-schluessel';
+    kiInput.placeholder = 'sk-...';
+    kiInput.autocomplete = 'off';
+    kiGroup.appendChild(kiInput);
+    const kiHint = document.createElement('small');
+    kiHint.textContent = 'Wird verschlüsselt gespeichert, nie angezeigt. Leer lassen = nicht ändern.';
+    kiGroup.appendChild(kiHint);
+    kiForm.appendChild(kiGroup);
+
+    const kiError = document.createElement('div');
+    kiError.className = 'error hidden';
+    kiError.id = 'ki-error';
+    kiForm.appendChild(kiError);
+
+    const kiBtn = document.createElement('button');
+    kiBtn.type = 'submit';
+    kiBtn.className = 'btn btn-primary';
+    kiBtn.textContent = 'Schlüssel speichern';
+    kiForm.appendChild(kiBtn);
+
+    kiForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const errorDiv = document.getElementById('ki-error');
+        errorDiv.classList.add('hidden');
+
+        const schluessel = document.getElementById('ki-schluessel').value.trim();
+        if (!schluessel) {
+            errorDiv.textContent = 'Bitte Schlüssel eingeben';
+            errorDiv.classList.remove('hidden');
+            return;
+        }
+
+        try {
+            await apiCall('/ki', {
+                method: 'PUT',
+                body: JSON.stringify({schluessel})
+            });
+            showToast('KI-Schlüssel gespeichert', 'success');
+            document.getElementById('ki-schluessel').value = '';
+        } catch (err) {
+            errorDiv.textContent = err.message;
+            errorDiv.classList.remove('hidden');
+        }
+    });
+
+    kiSection.appendChild(kiForm);
+    card.appendChild(kiSection);
+
+    main.innerHTML = '';
+    main.appendChild(card);
+}
+
+// KI-Einstellungen je Mandant
+async function renderMandantKI(m) {
+    const main = document.getElementById('main');
+    const card = document.createElement('div');
+    card.className = 'card';
+
+    const title = document.createElement('h2');
+    title.textContent = m.name;
+    card.appendChild(title);
+
+    renderTabs(m, card);
+
+    const loadingDiv = document.createElement('div');
+    loadingDiv.className = 'loading';
+    loadingDiv.textContent = 'Lade KI-Einstellungen...';
+    card.appendChild(loadingDiv);
+
+    main.innerHTML = '';
+    main.appendChild(card);
+
+    try {
+        const ki = await apiCall(`/mandanten/${m.id}/ki`);
+        loadingDiv.remove();
+
+        const subtitle = document.createElement('h3');
+        subtitle.textContent = 'KI-Textverbesserung';
+        card.appendChild(subtitle);
+
+        // Hinweis
+        if (ki.hinweis) {
+            const hinweisDiv = document.createElement('div');
+            hinweisDiv.style.marginTop = '1rem';
+            hinweisDiv.style.padding = '1rem';
+            hinweisDiv.style.background = '#f0f9ff';
+            hinweisDiv.style.borderRadius = '6px';
+            hinweisDiv.style.whiteSpace = 'pre-wrap';
+            hinweisDiv.textContent = ki.hinweis;
+            card.appendChild(hinweisDiv);
+        }
+
+        // Status
+        const statusDiv = document.createElement('dl');
+        statusDiv.style.marginTop = '1.5rem';
+        const statusLabel = document.createElement('dt');
+        statusLabel.textContent = 'Status';
+        statusLabel.style.fontWeight = '600';
+        statusDiv.appendChild(statusLabel);
+        const statusValue = document.createElement('dd');
+        statusValue.style.marginLeft = '1rem';
+        statusValue.textContent = ki.schluessel_gesetzt ? '✓ Schlüssel gesetzt' : '✗ Kein Schlüssel (in globalen Einstellungen hinterlegen)';
+        statusValue.style.color = ki.schluessel_gesetzt ? 'var(--color-success)' : 'var(--color-warning)';
+        statusDiv.appendChild(statusValue);
+
+        if (ki.modell) {
+            const modellLabel = document.createElement('dt');
+            modellLabel.textContent = 'Modell';
+            modellLabel.style.fontWeight = '600';
+            modellLabel.style.marginTop = '0.5rem';
+            statusDiv.appendChild(modellLabel);
+            const modellValue = document.createElement('dd');
+            modellValue.style.marginLeft = '1rem';
+            modellValue.textContent = ki.modell;
+            statusDiv.appendChild(modellValue);
+        }
+
+        if (ki.limit_je_stunde) {
+            const limitLabel = document.createElement('dt');
+            limitLabel.textContent = 'Limit';
+            limitLabel.style.fontWeight = '600';
+            limitLabel.style.marginTop = '0.5rem';
+            statusDiv.appendChild(limitLabel);
+            const limitValue = document.createElement('dd');
+            limitValue.style.marginLeft = '1rem';
+            limitValue.textContent = `${ki.limit_je_stunde} Anfragen pro Stunde`;
+            statusDiv.appendChild(limitValue);
+        }
+
+        card.appendChild(statusDiv);
+
+        // Schalter
+        const form = document.createElement('form');
+        form.style.marginTop = '1.5rem';
+
+        const aktivGroup = document.createElement('div');
+        aktivGroup.className = 'form-group';
+        const aktivLabel = document.createElement('label');
+        const aktivCheckbox = document.createElement('input');
+        aktivCheckbox.type = 'checkbox';
+        aktivCheckbox.id = 'ki-aktiv';
+        aktivCheckbox.checked = ki.aktiv;
+        aktivLabel.appendChild(aktivCheckbox);
+        aktivLabel.appendChild(document.createTextNode(' KI-Textverbesserung für diesen Mandanten aktivieren'));
+        aktivGroup.appendChild(aktivLabel);
+        form.appendChild(aktivGroup);
+
+        const errorDiv = document.createElement('div');
+        errorDiv.className = 'error hidden';
+        errorDiv.id = 'ki-mandant-error';
+        form.appendChild(errorDiv);
+
+        const saveBtn = document.createElement('button');
+        saveBtn.type = 'submit';
+        saveBtn.className = 'btn btn-primary';
+        saveBtn.textContent = 'Speichern';
+        form.appendChild(saveBtn);
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const errorDiv = document.getElementById('ki-mandant-error');
+            errorDiv.classList.add('hidden');
+
+            const aktiv = document.getElementById('ki-aktiv').checked;
+
+            try {
+                await apiCall(`/mandanten/${m.id}/ki`, {
+                    method: 'PUT',
+                    body: JSON.stringify({aktiv})
+                });
+                showToast('KI-Einstellungen gespeichert', 'success');
+                renderMandantKI(m);
+            } catch (err) {
+                errorDiv.textContent = err.message;
+                errorDiv.classList.remove('hidden');
+            }
+        });
+
+        card.appendChild(form);
+
+    } catch (err) {
+        loadingDiv.textContent = 'Fehler: ' + err.message;
+        loadingDiv.style.color = 'var(--color-error)';
+    }
+}
+
 // Abonnenten (Schritt 3)
 // Newsletter
 async function renderNewsletter(m) {
@@ -924,16 +1143,21 @@ async function renderNewsletterEditor(m, entwurfId) {
 
     let entwurf = null;
     let tagsData = null;
+    let kiSettings = null;
 
     try {
         // Paralleles Laden
-        const promises = [apiCall(`/mandanten/${m.id}/abonnenten/tags`)];
+        const promises = [
+            apiCall(`/mandanten/${m.id}/abonnenten/tags`),
+            apiCall(`/mandanten/${m.id}/ki`)
+        ];
         if (entwurfId) {
             promises.push(apiCall(`/mandanten/${m.id}/entwuerfe/${entwurfId}`));
         }
         const results = await Promise.all(promises);
         tagsData = results[0];
-        if (entwurfId) entwurf = results[1];
+        kiSettings = results[1];
+        if (entwurfId) entwurf = results[2];
 
         loadingDiv.remove();
 
@@ -976,6 +1200,131 @@ async function renderNewsletterEditor(m, entwurfId) {
         textHint.textContent = '1-50000 Zeichen. Leerzeilen sind Absätze, https-URLs werden automatisch verlinkt.';
         textGroup.appendChild(textHint);
         form.appendChild(textGroup);
+
+        // KI-Textverbesserung
+        if (kiSettings && kiSettings.aktiv && kiSettings.schluessel_gesetzt) {
+            const kiGroup = document.createElement('div');
+            kiGroup.className = 'form-group';
+            kiGroup.style.marginTop = '1.5rem';
+            kiGroup.style.padding = '1rem';
+            kiGroup.style.background = '#f0f9ff';
+            kiGroup.style.borderRadius = '6px';
+
+            const kiTitle = document.createElement('h4');
+            kiTitle.textContent = 'KI-Textverbesserung';
+            kiTitle.style.marginBottom = '0.5rem';
+            kiGroup.appendChild(kiTitle);
+
+            if (kiSettings.hinweis) {
+                const hinweisP = document.createElement('p');
+                hinweisP.style.fontSize = '0.875rem';
+                hinweisP.style.color = '#6b7280';
+                hinweisP.style.marginBottom = '0.75rem';
+                hinweisP.textContent = kiSettings.hinweis;
+                kiGroup.appendChild(hinweisP);
+            }
+
+            const anweisungLabel = document.createElement('label');
+            anweisungLabel.textContent = 'Anweisung (optional, max 300 Zeichen)';
+            anweisungLabel.style.display = 'block';
+            anweisungLabel.style.marginBottom = '0.25rem';
+            anweisungLabel.style.fontSize = '0.875rem';
+            kiGroup.appendChild(anweisungLabel);
+
+            const anweisungInput = document.createElement('input');
+            anweisungInput.type = 'text';
+            anweisungInput.id = 'ki-anweisung';
+            anweisungInput.maxLength = 300;
+            anweisungInput.placeholder = 'z.B. "Kürzer und prägnanter"';
+            anweisungInput.style.width = '100%';
+            kiGroup.appendChild(anweisungInput);
+
+            const verbessernBtn = document.createElement('button');
+            verbessernBtn.type = 'button';
+            verbessernBtn.className = 'btn btn-secondary';
+            verbessernBtn.textContent = 'Text verbessern';
+            verbessernBtn.style.marginTop = '0.75rem';
+            verbessernBtn.addEventListener('click', () => textVerbessern(m));
+            kiGroup.appendChild(verbessernBtn);
+
+            const kiError = document.createElement('div');
+            kiError.className = 'error hidden';
+            kiError.id = 'ki-verbesserung-error';
+            kiError.style.marginTop = '0.75rem';
+            kiGroup.appendChild(kiError);
+
+            // Vorschau-Bereich
+            const vorschauContainer = document.createElement('div');
+            vorschauContainer.id = 'ki-vorschau-container';
+            vorschauContainer.className = 'hidden';
+            vorschauContainer.style.marginTop = '1rem';
+            vorschauContainer.style.padding = '1rem';
+            vorschauContainer.style.background = 'white';
+            vorschauContainer.style.border = '1px solid var(--color-border)';
+            vorschauContainer.style.borderRadius = '6px';
+
+            const vorschauTitle = document.createElement('h5');
+            vorschauTitle.textContent = 'Vorschlag';
+            vorschauTitle.style.marginBottom = '0.75rem';
+            vorschauContainer.appendChild(vorschauTitle);
+
+            const vorschauBetreff = document.createElement('div');
+            vorschauBetreff.id = 'ki-vorschau-betreff';
+            vorschauBetreff.className = 'hidden';
+            vorschauBetreff.style.marginBottom = '0.75rem';
+            const vorschauBetreffLabel = document.createElement('strong');
+            vorschauBetreffLabel.textContent = 'Betreff:';
+            vorschauBetreff.appendChild(vorschauBetreffLabel);
+            const vorschauBetreffText = document.createElement('div');
+            vorschauBetreffText.id = 'ki-vorschau-betreff-text';
+            vorschauBetreffText.style.marginTop = '0.25rem';
+            vorschauBetreffText.style.padding = '0.5rem';
+            vorschauBetreffText.style.background = '#f9fafb';
+            vorschauBetreffText.style.borderRadius = '4px';
+            vorschauBetreff.appendChild(vorschauBetreffText);
+            vorschauContainer.appendChild(vorschauBetreff);
+
+            const vorschauTextDiv = document.createElement('div');
+            const vorschauTextLabel = document.createElement('strong');
+            vorschauTextLabel.textContent = 'Text:';
+            vorschauTextDiv.appendChild(vorschauTextLabel);
+            const vorschauTextContent = document.createElement('div');
+            vorschauTextContent.id = 'ki-vorschau-text';
+            vorschauTextContent.style.marginTop = '0.25rem';
+            vorschauTextContent.style.padding = '0.5rem';
+            vorschauTextContent.style.background = '#f9fafb';
+            vorschauTextContent.style.borderRadius = '4px';
+            vorschauTextContent.style.whiteSpace = 'pre-wrap';
+            vorschauTextDiv.appendChild(vorschauTextContent);
+            vorschauContainer.appendChild(vorschauTextDiv);
+
+            const vorschauActions = document.createElement('div');
+            vorschauActions.style.marginTop = '0.75rem';
+            vorschauActions.style.display = 'flex';
+            vorschauActions.style.gap = '0.5rem';
+
+            const uebernehmenBtn = document.createElement('button');
+            uebernehmenBtn.type = 'button';
+            uebernehmenBtn.className = 'btn btn-primary';
+            uebernehmenBtn.textContent = 'Übernehmen';
+            uebernehmenBtn.addEventListener('click', uebernehmenVorschlag);
+            vorschauActions.appendChild(uebernehmenBtn);
+
+            const verwerfenBtn = document.createElement('button');
+            verwerfenBtn.type = 'button';
+            verwerfenBtn.className = 'btn btn-secondary';
+            verwerfenBtn.textContent = 'Verwerfen';
+            verwerfenBtn.addEventListener('click', () => {
+                document.getElementById('ki-vorschau-container').classList.add('hidden');
+                delete state.kiVorschlag;
+            });
+            vorschauActions.appendChild(verwerfenBtn);
+
+            vorschauContainer.appendChild(vorschauActions);
+            kiGroup.appendChild(vorschauContainer);
+
+            form.appendChild(kiGroup);
+        }
 
         // Ziel
         const zielGroup = document.createElement('div');
@@ -1308,6 +1657,97 @@ async function renderNewsletterEditor(m, entwurfId) {
             } catch (err) {
                 alert('Fehler: ' + err.message);
             }
+        }
+
+        async function textVerbessern(mandant) {
+            const errorDiv = document.getElementById('ki-verbesserung-error');
+            errorDiv.classList.add('hidden');
+
+            const betreff = document.getElementById('newsletter-betreff').value.trim();
+            const text = document.getElementById('newsletter-text').value.trim();
+            const anweisung = document.getElementById('ki-anweisung').value.trim() || null;
+
+            if (!text || text.length > 8000) {
+                errorDiv.textContent = 'Text: 1-8000 Zeichen für KI-Verbesserung';
+                errorDiv.classList.remove('hidden');
+                return;
+            }
+
+            if (betreff && betreff.length > 150) {
+                errorDiv.textContent = 'Betreff: max 150 Zeichen';
+                errorDiv.classList.remove('hidden');
+                return;
+            }
+
+            const verbessernBtn = document.querySelector('.btn-secondary');
+            verbessernBtn.disabled = true;
+            verbessernBtn.textContent = 'Wird verbessert...';
+
+            try {
+                const body = {text};
+                if (betreff) body.betreff = betreff;
+                if (anweisung) body.anweisung = anweisung;
+
+                const result = await apiCall(`/mandanten/${mandant.id}/entwuerfe/text-verbessern`, {
+                    method: 'POST',
+                    body: JSON.stringify(body)
+                });
+
+                // Vorschlag speichern
+                state.kiVorschlag = result.vorschlag;
+
+                // Vorschau anzeigen
+                const vorschauContainer = document.getElementById('ki-vorschau-container');
+                const vorschauBetreffDiv = document.getElementById('ki-vorschau-betreff');
+                const vorschauBetreffText = document.getElementById('ki-vorschau-betreff-text');
+                const vorschauTextContent = document.getElementById('ki-vorschau-text');
+
+                if (result.vorschlag.betreff) {
+                    vorschauBetreffText.textContent = result.vorschlag.betreff;
+                    vorschauBetreffDiv.classList.remove('hidden');
+                } else {
+                    vorschauBetreffDiv.classList.add('hidden');
+                }
+
+                vorschauTextContent.textContent = result.vorschlag.text;
+                vorschauContainer.classList.remove('hidden');
+
+                showToast('Vorschlag generiert', 'success');
+
+            } catch (err) {
+                // Fehlerbehandlung nach Docky's Spec
+                let message = err.message;
+                if (message.includes('funktion_nicht_aktiv')) {
+                    message = 'KI-Textverbesserung ist nicht aktiviert';
+                } else if (message.includes('kein_ki_zugang')) {
+                    message = 'Kein KI-Zugang konfiguriert (in globalen Einstellungen hinterlegen)';
+                } else if (message.includes('zeitueberschreitung')) {
+                    message = 'Zeitüberschreitung (60 Sekunden). Bitte erneut versuchen.';
+                } else if (message.includes('ki_fehler')) {
+                    message = 'KI-Fehler. Bitte später erneut versuchen.';
+                } else if (message.includes('limit_erreicht')) {
+                    message = 'Limit erreicht. Bitte später erneut versuchen.';
+                }
+                errorDiv.textContent = message;
+                errorDiv.classList.remove('hidden');
+            } finally {
+                verbessernBtn.disabled = false;
+                verbessernBtn.textContent = 'Text verbessern';
+            }
+        }
+
+        function uebernehmenVorschlag() {
+            if (!state.kiVorschlag) return;
+
+            if (state.kiVorschlag.betreff) {
+                document.getElementById('newsletter-betreff').value = state.kiVorschlag.betreff;
+            }
+            document.getElementById('newsletter-text').value = state.kiVorschlag.text;
+
+            document.getElementById('ki-vorschau-container').classList.add('hidden');
+            delete state.kiVorschlag;
+
+            showToast('Vorschlag übernommen (noch nicht gespeichert)', 'success');
         }
 
     } catch (err) {
