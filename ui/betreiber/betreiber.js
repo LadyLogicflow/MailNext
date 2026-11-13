@@ -138,9 +138,7 @@ function renderMandantenListe() {
         const nameCell = document.createElement('td');
         const nameBtn = document.createElement('button');
         nameBtn.textContent = m.name;
-        nameBtn.style.all = 'unset';
-        nameBtn.style.cursor = 'pointer';
-        nameBtn.style.textDecoration = 'underline';
+        nameBtn.className = 'tabelle-link';
         nameBtn.addEventListener('click', () => showMandantDetails(m.id));
         nameCell.appendChild(nameBtn);
         row.appendChild(nameCell);
@@ -472,7 +470,6 @@ function renderMandantDetails(m) {
         errorSpan.id = `error-${feld.id}`;
         errorSpan.style.color = 'var(--color-error)';
         errorSpan.style.fontSize = '0.875rem';
-        errorSpan.style.display = 'block';
         errorSpan.style.marginTop = '0.25rem';
         g.appendChild(errorSpan);
         const small = document.createElement('small');

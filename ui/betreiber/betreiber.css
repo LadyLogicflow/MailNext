@@ -270,6 +270,26 @@ tbody tr {
     color: #6b7280;
 }
 
+/* Tabellen-Link (Tastatur-zugänglich, Fokusrahmen sichtbar) */
+.tabelle-link {
+    all: unset;
+    cursor: pointer;
+    text-decoration: underline;
+}
+
+.tabelle-link:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+}
+
+/* Feld-Fehler (Live-Validation) */
+.field-error {
+    display: block;
+    color: var(--color-error);
+    font-size: 0.875rem;
+    margin-top: 0.25rem;
+}
+
 .hidden {
     display: none;
 }
