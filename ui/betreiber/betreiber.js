@@ -155,7 +155,8 @@ function renderMandantenListe() {
             : `${bestaetigt} bestätigt`;
         row.appendChild(aboCell);
 
-        // TODO: Click-Handler für Details (Schritt 2)
+        // Click → Details
+        row.addEventListener('click', () => showMandantDetails(m.id));
 
         tbody.appendChild(row);
     });
@@ -272,6 +273,137 @@ function renderMandantAnlegen() {
         } finally {
             submitBtn.disabled = false;
             submitBtn.textContent = 'Mandant anlegen';
+        }
+    });
+
+    card.appendChild(form);
+
+    main.innerHTML = '';
+    main.appendChild(card);
+}
+
+// Mandant Details + Design (Schritt 2 - Basis-Version)
+async function showMandantDetails(mandantId) {
+    try {
+        const m = await apiCall(`/mandanten/${mandantId}`);
+        state.currentMandant = m;
+        renderMandantDetails(m);
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+}
+
+function renderMandantDetails(m) {
+    const main = document.getElementById('main');
+    const card = document.createElement('div');
+    card.className = 'card';
+
+    const title = document.createElement('h2');
+    title.textContent = m.name;
+    card.appendChild(title);
+
+    const errorDiv = document.createElement('div');
+    errorDiv.className = 'error hidden';
+    errorDiv.id = 'details-error';
+    card.appendChild(errorDiv);
+
+    const form = document.createElement('form');
+    form.id = 'details-form';
+
+    // Name
+    const nameGroup = document.createElement('div');
+    nameGroup.className = 'form-group';
+    const nameLabel = document.createElement('label');
+    nameLabel.textContent = 'Name';
+    nameGroup.appendChild(nameLabel);
+    const nameInput = document.createElement('input');
+    nameInput.type = 'text';
+    nameInput.id = 'edit-name';
+    nameInput.value = m.name;
+    nameInput.maxLength = 100;
+    nameGroup.appendChild(nameInput);
+    form.appendChild(nameGroup);
+
+    // Aktiv
+    const aktivGroup = document.createElement('div');
+    aktivGroup.className = 'form-group';
+    const aktivLabel = document.createElement('label');
+    aktivLabel.innerHTML = '<input type="checkbox" id="edit-aktiv"> Aktiv';
+    aktivGroup.appendChild(aktivLabel);
+    aktivGroup.querySelector('#edit-aktiv').checked = m.aktiv;
+    form.appendChild(aktivGroup);
+
+    // Farben (Basis)
+    const farbGroup = document.createElement('div');
+    farbGroup.className = 'form-group';
+    const farbTitle = document.createElement('h3');
+    farbTitle.textContent = 'Farben';
+    farbGroup.appendChild(farbTitle);
+
+    ['farbe_primaer', 'farbe_akzent', 'farbe_hintergrund', 'farbe_text'].forEach(f => {
+        const label = document.createElement('label');
+        label.textContent = f.replace('farbe_', '').replace('_', ' ');
+        const input = document.createElement('input');
+        input.type = 'color';
+        input.id = `edit-${f}`;
+        input.value = m.design[f] || '#000000';
+        label.appendChild(input);
+        farbGroup.appendChild(label);
+    });
+    form.appendChild(farbGroup);
+
+    // Buttons
+    const actions = document.createElement('div');
+    actions.className = 'form-actions';
+
+    const submitBtn = document.createElement('button');
+    submitBtn.type = 'submit';
+    submitBtn.className = 'btn btn-primary';
+    submitBtn.textContent = 'Speichern';
+    actions.appendChild(submitBtn);
+
+    const cancelBtn = document.createElement('button');
+    cancelBtn.type = 'button';
+    cancelBtn.className = 'btn btn-secondary';
+    cancelBtn.textContent = 'Zurück';
+    cancelBtn.addEventListener('click', () => showView('liste'));
+    actions.appendChild(cancelBtn);
+
+    form.appendChild(actions);
+
+    form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+
+        const errorDiv = document.getElementById('details-error');
+        errorDiv.className = 'error hidden';
+
+        const name = document.getElementById('edit-name').value.trim();
+        const aktiv = document.getElementById('edit-aktiv').checked;
+        const design = {
+            farbe_primaer: document.getElementById('edit-farbe_primaer').value,
+            farbe_akzent: document.getElementById('edit-farbe_akzent').value,
+            farbe_hintergrund: document.getElementById('edit-farbe_hintergrund').value,
+            farbe_text: document.getElementById('edit-farbe_text').value
+        };
+
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Wird gespeichert...';
+
+        try {
+            await apiCall(`/mandanten/${m.id}`, {
+                method: 'PUT',
+                body: JSON.stringify({ name, aktiv, design })
+            });
+
+            showToast('Änderungen gespeichert', 'success');
+            await loadMandanten();
+            showView('liste');
+        } catch (err) {
+            errorDiv.textContent = err.message;
+            errorDiv.className = 'error';
+        } finally {
+            submitBtn.disabled = false;
+            submitBtn.textContent = 'Speichern';
         }
     });
 
