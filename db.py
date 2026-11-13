@@ -60,6 +60,44 @@ CREATE TABLE IF NOT EXISTS anmelde_log (
     zeit TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_anmelde_log_zeit ON anmelde_log(mandant_id, zeit);
+CREATE TABLE IF NOT EXISTS testadresse (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    mandant_id INTEGER NOT NULL REFERENCES mandant(id),
+    email TEXT NOT NULL,
+    UNIQUE(mandant_id, email)
+);
+CREATE TABLE IF NOT EXISTS entwurf (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    mandant_id INTEGER NOT NULL REFERENCES mandant(id),
+    betreff TEXT NOT NULL,
+    text TEXT NOT NULL,
+    ziel TEXT NOT NULL,
+    segment TEXT NOT NULL DEFAULT '{}',
+    status TEXT NOT NULL DEFAULT 'entwurf',
+    content_hash TEXT NOT NULL,
+    testmail_hash TEXT,
+    testmail_am TEXT,
+    erstellt TEXT NOT NULL,
+    geaendert TEXT NOT NULL,
+    freigegeben_am TEXT,
+    freigegeben_von TEXT,
+    gestoppt_am TEXT
+);
+-- Eine Zeile je Empfängerin und Entwurf; schluessel ist 'a<abonnent_id>' oder 't<HMAC der Testadresse>': höchstens einmal je Person und Entwurf.
+CREATE TABLE IF NOT EXISTS empfaenger (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    entwurf_id INTEGER NOT NULL REFERENCES entwurf(id),
+    mandant_id INTEGER NOT NULL,
+    abonnent_id INTEGER,
+    email TEXT,
+    schluessel TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'queued',
+    versuche INTEGER NOT NULL DEFAULT 0,
+    zeit TEXT,
+    fehler TEXT,
+    UNIQUE(entwurf_id, schluessel)
+);
+CREATE INDEX IF NOT EXISTS idx_empfaenger_status ON empfaenger(mandant_id, status, zeit);
 CREATE TABLE IF NOT EXISTS audit_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     zeit TEXT NOT NULL,

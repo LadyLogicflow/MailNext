@@ -510,7 +510,7 @@ class SeitenSicherheitTests(Basis):
 
     def test_zu_grosse_anfrage_413(self):
         self.mandant("hilo")
-        r = self.c.post("/api/hilo/newsletter/anmelden", data=b"x" * 30000, content_type="application/json")
+        r = self.c.post("/api/hilo/newsletter/anmelden", data=b"x" * 400000, content_type="application/json")
         self.assertEqual(r.status_code, 413)
 
 

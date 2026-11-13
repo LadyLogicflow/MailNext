@@ -9,6 +9,7 @@ import db
 import einstellungen
 import betreiber
 import betreiber_ui
+import newsletter
 import public
 
 
@@ -33,7 +34,7 @@ def _health_daten() -> tuple[dict, bool]:
     return daten, gesund
 
 
-def create_app(db_pfad: str | None = None) -> Flask:
+def create_app(db_pfad: str | None = None, versand_job: bool = False) -> Flask:
     app = Flask(__name__)
     verz = config.daten_verzeichnis()
     if db_pfad is None:
@@ -41,7 +42,7 @@ def create_app(db_pfad: str | None = None) -> Flask:
         db_pfad = str(verz / "mailnext.db")
     db.init(db_pfad)
 
-    app.config["MAX_CONTENT_LENGTH"] = 20000
+    app.config["MAX_CONTENT_LENGTH"] = 300000
     app.register_blueprint(public.bp)
     app.register_blueprint(betreiber.bp)
     app.register_blueprint(betreiber_ui.bp)
@@ -63,9 +64,34 @@ def create_app(db_pfad: str | None = None) -> Flask:
     def api_version():
         return jsonify({"app": "mailnext", "version": config.version()})
 
+    if versand_job:
+        _versand_job_starten()
     return app
+
+
+_job_gestartet = False
+
+
+def _versand_job_starten(intervall: float = 60.0) -> None:
+    """Hintergrundthread: ein Versandlauf je Minute (ein gunicorn-Worker, SQLite). Fehler stoppen den Job nie."""
+    global _job_gestartet
+    if _job_gestartet:
+        return
+    _job_gestartet = True
+    import threading
+    import time
+
+    def schleife():
+        while True:
+            time.sleep(intervall)
+            try:
+                newsletter.lauf()
+            except Exception:
+                logging.exception("Versandlauf fehlgeschlagen")
+
+    threading.Thread(target=schleife, name="mailnext-versand", daemon=True).start()
 
 
 def _wsgi():
     logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"))
-    return create_app()
+    return create_app(versand_job=os.environ.get("MAILNEXT_VERSAND_JOB", "1") != "0")

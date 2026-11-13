@@ -5,7 +5,8 @@ Domain: mailnext.bst-next.de. Betreiber melden sich über das Portal-Cookie an (
 
 ## Stand
 - Meilenstein 0 (Gerüst): `/health`, `/api/version`, verschlüsselte Einstellungen, Audit-Tabelle, Betreiber-Prüfung.
-- **Meilenstein A (0.1.0): Mandanten, Anmelden, Bestätigen, Abmelden, Präferenzen.** Versand von Newslettern folgt mit Meilenstein B.
+- Meilenstein A (0.1.0): Mandanten, Anmelden, Bestätigen, Abmelden, Präferenzen.
+- **Meilenstein B (0.2.0): Newsletter schreiben, Testmail, Freigabe, Versand mit Limit, Protokoll.** Echtversand bleibt je Mandant gesperrt, bis ein Betreiber ihn ausdrücklich freigibt.
 
 ## Mandanten
 Jeder Mandant hat eine Kennung (`slug`) und trennt alles strikt: eigenes Design (Farben, Schrift, Logo, Absender, Firmenangaben, Impressum/Datenschutz,
@@ -23,6 +24,17 @@ Dieselbe E-Mail-Adresse hat in zwei Mandanten verschiedene Pseudonyme (HMAC), To
 ## Betreiber-Schnittstelle (`/api/v1/betreiber`, Portal-Cookie, jeder Aufruf im Audit-Log)
 `GET|POST /mandanten`, `GET|PUT /mandanten/<id>`, `POST /mandanten/<id>/einwilligungen`, `PUT /mandanten/<id>/versand`, `GET /mandanten/<id>/abonnenten`.
 Geheimnisse (SMTP-Passwort) werden nie zurückgegeben, nur ob sie gesetzt sind.
+
+## Newsletter (je Mandant, Betreiber-Schnittstelle `/api/v1/betreiber/mandanten/<id>/…`)
+- `entwuerfe` (GET, POST `{betreff, text, ziel: testliste|abonnenten, segment: {rollen, interessen}}`), `entwuerfe/<eid>` (GET, PUT nur im Status entwurf).
+- `entwuerfe/<eid>/testmail` (POST `{an?}`: ohne `an` an den eingeloggten Betreiber, `an` nur aus der Testliste), `…/empfaengervorschau` (nur Zahl), `…/freigeben` (POST `{content_hash, bestaetigt: true}`),
+  `…/stoppen`, `…/status`, `…/protokoll` und `…/protokoll.csv` (Adressen, wird protokolliert; CSV mit Formelschutz).
+- `testliste` (GET, PUT, höchstens 50), `echtversand` (GET, PUT `{freigegeben: bool}`, Standard false).
+- Regeln: Freigabe nur mit Testmail zum aktuellen Stand (SHA-256 über Betreff, Text, Ziel, Segment); Empfängerliste wird bei der Freigabe festgeschrieben (nur bestätigte Adressen);
+  Echtversand (`ziel: abonnenten`) nur nach Freigabe des Mandanten, auch der Versandlauf prüft das nochmals; Abmeldestatus wird vor jedem Senden erneut geprüft.
+- Versandlauf: jede Minute im Hintergrund (`MAILNEXT_VERSAND_JOB=0` schaltet ihn ab), höchstens 5 Mails je Lauf und 100 je Stunde und Mandant, höchstens einmal je Person und Entwurf.
+  Vorübergehende Fehler: bis zu 3 Versuche im Abstand von 5 Minuten, dann `fehlgeschlagen`. Harte Ablehnung: Adresse wird `unzustellbar`. Hängt eine Zeile über 10 Minuten in `sending`, wird sie `unklar` und nie automatisch wiederholt.
+- Jede Mail: Text und HTML im Mandantendesign, persönlicher Einstellungs- und Abmeldelink, `List-Unsubscribe` mit One-Click, kein Tracking.
 
 ## Versand
 Standard je Mandant: `aus` (es geht keine Mail hinaus). `datei`: Mails landen als .eml unter `<Daten>/ausgang/<slug>/` (Test auf dem Pi, 7 Tage). `smtp`: über das SMTP-Konto des Mandanten.

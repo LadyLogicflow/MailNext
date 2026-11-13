@@ -125,7 +125,7 @@ def _aufraeumen(verz) -> None:
 
 
 def senden(mandant: dict, an: str, betreff: str, text: str, html_text: str, header: dict | None = None) -> str:
-    """Gibt 'aus' | 'datei' | 'gesendet' | 'absender_fehlt' | 'konfiguration_fehlt' | 'fehler' zurück. Wirft nie; Adressen werden nicht protokolliert."""
+    """Gibt 'aus' | 'datei' | 'gesendet' | 'abgelehnt' | 'absender_fehlt' | 'konfiguration_fehlt' | 'fehler' zurück. Wirft nie; Adressen werden nicht protokolliert."""
     modus = mandanten.versandmodus(mandant["id"])
     if modus == "aus":
         return "aus"
@@ -155,6 +155,8 @@ def senden(mandant: dict, an: str, betreff: str, text: str, html_text: str, head
             smtp.login(e["smtp_benutzer"], e["smtp_passwort"])
             smtp.send_message(nachricht)
         return "gesendet"
+    except smtplib.SMTPRecipientsRefused:                                          # harte Ablehnung der Adresse: dauerhaft unzustellbar
+        return "abgelehnt"
     except Exception as exc:
         LOG.warning("Mailversand fehlgeschlagen (Mandant %s, %s)", mandant["slug"], type(exc).__name__)
         return "fehler"

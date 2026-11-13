@@ -10,6 +10,7 @@ import abonnenten
 import betreiber_auth
 import db
 import mandanten
+import newsletter
 from mandanten import Ungueltig
 
 bp = Blueprint("betreiber", __name__, url_prefix="/api/v1/betreiber")
@@ -140,3 +141,164 @@ def abonnenten_liste(mandant_id):
     zeilen = abonnenten.liste(mandant_id)
     _audit("abonnenten_gelesen", "mandant=%s anzahl=%d" % (m["slug"], len(zeilen)))                 # enthält Adressen: darum protokolliert
     return jsonify({"abonnenten": zeilen, "kennzahlen": abonnenten.kennzahlen(mandant_id)})
+
+
+# ----- Newsletter (Meilenstein B): Entwürfe, Testmail, Freigabe, Versand, Protokoll -----
+
+def _nl(f):
+    """Mandant aus dem Pfad laden (404) und newsletter.Fehler in die Antwort übersetzen."""
+    @wraps(f)
+    def innen(mandant_id, *a, **kw):
+        m = _mandant_oder_404(mandant_id)
+        if m is None:
+            return jsonify({"error": "nicht_gefunden"}), 404
+        try:
+            return f(m, *a, **kw)
+        except newsletter.Fehler as fehler:
+            return jsonify({"error": fehler.code, "meldung": fehler.meldung}), fehler.status
+    return innen
+
+
+@bp.get("/mandanten/<int:mandant_id>/entwuerfe")
+@betreiber_auth.betreiber_pflicht
+@_nl
+def entwuerfe(m):
+    _audit("entwuerfe_liste", "mandant=%s" % m["slug"])
+    return jsonify({"entwuerfe": newsletter.liste(m)})
+
+
+@bp.post("/mandanten/<int:mandant_id>/entwuerfe")
+@betreiber_auth.betreiber_pflicht
+@_nl
+def entwurf_anlegen(m):
+    d = _json() or {}
+    e = newsletter.anlegen(m, d.get("betreff"), d.get("text"), d.get("ziel", "testliste"), d.get("segment"))
+    _audit("entwurf_angelegt", "mandant=%s entwurf=%d ziel=%s" % (m["slug"], e["id"], e["ziel"]))
+    return jsonify({"id": e["id"], "content_hash": e["content_hash"]}), 201
+
+
+@bp.get("/mandanten/<int:mandant_id>/entwuerfe/<int:entwurf_id>")
+@betreiber_auth.betreiber_pflicht
+@_nl
+def entwurf_lesen(m, entwurf_id):
+    e = newsletter.lesen(m, entwurf_id)
+    if e is None:
+        return jsonify({"error": "nicht_gefunden"}), 404
+    _audit("entwurf_gelesen", "mandant=%s entwurf=%d" % (m["slug"], entwurf_id))
+    return jsonify(e)
+
+
+@bp.put("/mandanten/<int:mandant_id>/entwuerfe/<int:entwurf_id>")
+@betreiber_auth.betreiber_pflicht
+@_nl
+def entwurf_aendern(m, entwurf_id):
+    d = _json() or {}
+    e = newsletter.aendern(m, entwurf_id, d.get("betreff"), d.get("text"), d.get("ziel"), d.get("segment"))
+    _audit("entwurf_geaendert", "mandant=%s entwurf=%d" % (m["slug"], entwurf_id))
+    return jsonify({"content_hash": e["content_hash"]})
+
+
+@bp.post("/mandanten/<int:mandant_id>/entwuerfe/<int:entwurf_id>/testmail")
+@betreiber_auth.betreiber_pflicht
+@_nl
+def testmail(m, entwurf_id):
+    d = _json() or {}
+    ergebnis = newsletter.testmail(m, entwurf_id, d.get("an"), g.betreiber["email"])
+    _audit("testmail_gesendet", "mandant=%s entwurf=%d" % (m["slug"], entwurf_id))               # Adresse steht nicht im Audit
+    return jsonify({"status": ergebnis["status"], "content_hash": ergebnis["content_hash"]})
+
+
+@bp.get("/mandanten/<int:mandant_id>/entwuerfe/<int:entwurf_id>/empfaengervorschau")
+@betreiber_auth.betreiber_pflicht
+@_nl
+def empfaengervorschau(m, entwurf_id):
+    v = newsletter.vorschau(m, entwurf_id)
+    _audit("empfaengervorschau", "mandant=%s entwurf=%d anzahl=%d" % (m["slug"], entwurf_id, v["anzahl"]))
+    return jsonify(v)
+
+
+@bp.post("/mandanten/<int:mandant_id>/entwuerfe/<int:entwurf_id>/freigeben")
+@betreiber_auth.betreiber_pflicht
+@_nl
+def freigeben(m, entwurf_id):
+    d = _json() or {}
+    ergebnis = newsletter.freigeben(m, entwurf_id, d.get("content_hash"), d.get("bestaetigt"), g.betreiber["email"])
+    _audit("entwurf_freigegeben", "mandant=%s entwurf=%d empfaenger=%d" % (m["slug"], entwurf_id, ergebnis["empfaenger"]))
+    return jsonify(ergebnis)
+
+
+@bp.post("/mandanten/<int:mandant_id>/entwuerfe/<int:entwurf_id>/stoppen")
+@betreiber_auth.betreiber_pflicht
+@_nl
+def stoppen(m, entwurf_id):
+    ergebnis = newsletter.stoppen(m, entwurf_id)
+    _audit("entwurf_gestoppt", "mandant=%s entwurf=%d" % (m["slug"], entwurf_id))
+    return jsonify(ergebnis)
+
+
+@bp.get("/mandanten/<int:mandant_id>/entwuerfe/<int:entwurf_id>/status")
+@betreiber_auth.betreiber_pflicht
+@_nl
+def entwurf_status(m, entwurf_id):
+    s = newsletter.status(m, entwurf_id)
+    _audit("entwurf_status", "mandant=%s entwurf=%d" % (m["slug"], entwurf_id))
+    return jsonify(s)
+
+
+@bp.get("/mandanten/<int:mandant_id>/entwuerfe/<int:entwurf_id>/protokoll")
+@betreiber_auth.betreiber_pflicht
+@_nl
+def protokoll(m, entwurf_id):
+    zeilen = newsletter.protokoll(m, entwurf_id)
+    _audit("protokoll_gelesen", "mandant=%s entwurf=%d anzahl=%d" % (m["slug"], entwurf_id, len(zeilen)))      # enthält Adressen: protokolliert
+    return jsonify({"empfaenger": zeilen})
+
+
+@bp.get("/mandanten/<int:mandant_id>/entwuerfe/<int:entwurf_id>/protokoll.csv")
+@betreiber_auth.betreiber_pflicht
+@_nl
+def protokoll_csv(m, entwurf_id):
+    zeilen = newsletter.protokoll(m, entwurf_id)
+    _audit("protokoll_csv_gelesen", "mandant=%s entwurf=%d anzahl=%d" % (m["slug"], entwurf_id, len(zeilen)))
+    from flask import Response
+    return Response(newsletter.protokoll_csv(zeilen), mimetype="text/csv; charset=utf-8",
+                    headers={"Content-Disposition": 'attachment; filename="protokoll-%d.csv"' % entwurf_id})
+
+
+@bp.get("/mandanten/<int:mandant_id>/testliste")
+@betreiber_auth.betreiber_pflicht
+@_nl
+def testliste_lesen(m):
+    adressen = newsletter.testliste(m)
+    _audit("testliste_gelesen", "mandant=%s anzahl=%d" % (m["slug"], len(adressen)))
+    return jsonify({"adressen": adressen})
+
+
+@bp.put("/mandanten/<int:mandant_id>/testliste")
+@betreiber_auth.betreiber_pflicht
+@_nl
+def testliste_setzen(m):
+    d = _json() or {}
+    adressen = newsletter.testliste_setzen(m, d.get("adressen"))
+    _audit("testliste_gesetzt", "mandant=%s anzahl=%d" % (m["slug"], len(adressen)))
+    return jsonify({"adressen": adressen})
+
+
+@bp.get("/mandanten/<int:mandant_id>/echtversand")
+@betreiber_auth.betreiber_pflicht
+@_nl
+def echtversand_lesen(m):
+    _audit("echtversand_gelesen", "mandant=%s" % m["slug"])
+    return jsonify({"echtversand_freigegeben": newsletter.echtversand_freigegeben(m["id"])})
+
+
+@bp.put("/mandanten/<int:mandant_id>/echtversand")
+@betreiber_auth.betreiber_pflicht
+@_nl
+def echtversand_setzen(m):
+    d = _json() or {}
+    if not isinstance(d.get("freigegeben"), bool):
+        return _fehler("freigegeben muss true oder false sein")
+    newsletter.echtversand_setzen(m["id"], d["freigegeben"], g.betreiber["email"])
+    _audit("echtversand_geaendert", "mandant=%s freigegeben=%s" % (m["slug"], str(d["freigegeben"]).lower()))
+    return jsonify({"echtversand_freigegeben": d["freigegeben"]})
