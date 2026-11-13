@@ -301,16 +301,7 @@ async function showMandantDetails(mandantId, tab = 'details') {
     }
 }
 
-function renderMandantDetails(m) {
-    const main = document.getElementById('main');
-    const card = document.createElement('div');
-    card.className = 'card';
-
-    const title = document.createElement('h2');
-    title.textContent = m.name;
-    card.appendChild(title);
-
-    // Tabs
+function renderTabs(m, card) {
     const tabsNav = document.createElement('div');
     tabsNav.style.marginBottom = '1.5rem';
     tabsNav.style.borderBottom = '1px solid var(--color-border)';
@@ -328,6 +319,18 @@ function renderMandantDetails(m) {
         tabsNav.appendChild(btn);
     });
     card.appendChild(tabsNav);
+}
+
+function renderMandantDetails(m) {
+    const main = document.getElementById('main');
+    const card = document.createElement('div');
+    card.className = 'card';
+
+    const title = document.createElement('h2');
+    title.textContent = m.name;
+    card.appendChild(title);
+
+    renderTabs(m, card);
 
     const errorDiv = document.createElement('div');
     errorDiv.className = 'error hidden';
@@ -682,24 +685,7 @@ async function renderVersand(m) {
     title.textContent = m.name;
     card.appendChild(title);
 
-    // Tabs
-    const tabsNav = document.createElement('div');
-    tabsNav.style.marginBottom = '1.5rem';
-    tabsNav.style.borderBottom = '1px solid var(--color-border)';
-    const tabs = [{id: 'details', label: 'Einstellungen'}, {id: 'versand', label: 'Versand'}, {id: 'abonnenten', label: 'Abonnenten'}];
-    tabs.forEach(tab => {
-        const btn = document.createElement('button');
-        btn.textContent = tab.label;
-        btn.style.padding = '0.5rem 1rem';
-        btn.style.background = 'none';
-        btn.style.border = 'none';
-        btn.style.borderBottom = state.currentTab === tab.id ? '2px solid var(--color-primary)' : '2px solid transparent';
-        btn.style.cursor = 'pointer';
-        btn.style.fontWeight = state.currentTab === tab.id ? '600' : 'normal';
-        btn.addEventListener('click', () => showMandantDetails(m.id, tab.id));
-        tabsNav.appendChild(btn);
-    });
-    card.appendChild(tabsNav);
+    renderTabs(m, card);
 
     const form = document.createElement('form');
     const errorDiv = document.createElement('div');
@@ -750,6 +736,8 @@ async function renderVersand(m) {
         i.type = f.type;
         i.id = f.id;
         if (f.placeholder) i.placeholder = f.placeholder;
+        if (f.id === 'smtp_passwort') i.autocomplete = 'new-password';
+        if (f.id === 'smtp_benutzer') i.autocomplete = 'off';
         g.appendChild(i);
         smtpDiv.appendChild(g);
     });
@@ -761,6 +749,10 @@ async function renderVersand(m) {
     verschlGroup.appendChild(verschlLabel);
     const verschlSelect = document.createElement('select');
     verschlSelect.id = 'smtp_verschluesselung';
+    const defaultOpt = document.createElement('option');
+    defaultOpt.value = '';
+    defaultOpt.textContent = '(unverändert)';
+    verschlSelect.appendChild(defaultOpt);
     ['ssl', 'starttls'].forEach(v => {
         const opt = document.createElement('option');
         opt.value = v;
@@ -822,24 +814,7 @@ async function renderAbonnenten(m) {
     title.textContent = m.name;
     card.appendChild(title);
 
-    // Tabs
-    const tabsNav = document.createElement('div');
-    tabsNav.style.marginBottom = '1.5rem';
-    tabsNav.style.borderBottom = '1px solid var(--color-border)';
-    const tabs = [{id: 'details', label: 'Einstellungen'}, {id: 'versand', label: 'Versand'}, {id: 'abonnenten', label: 'Abonnenten'}];
-    tabs.forEach(tab => {
-        const btn = document.createElement('button');
-        btn.textContent = tab.label;
-        btn.style.padding = '0.5rem 1rem';
-        btn.style.background = 'none';
-        btn.style.border = 'none';
-        btn.style.borderBottom = state.currentTab === tab.id ? '2px solid var(--color-primary)' : '2px solid transparent';
-        btn.style.cursor = 'pointer';
-        btn.style.fontWeight = state.currentTab === tab.id ? '600' : 'normal';
-        btn.addEventListener('click', () => showMandantDetails(m.id, tab.id));
-        tabsNav.appendChild(btn);
-    });
-    card.appendChild(tabsNav);
+    renderTabs(m, card);
 
     const loadingDiv = document.createElement('div');
     loadingDiv.className = 'loading';
@@ -907,11 +882,10 @@ async function renderAbonnenten(m) {
             const statusCell = document.createElement('td');
             const badge = document.createElement('span');
             badge.className = 'badge';
-            if (a.bestaetigt_am) badge.classList.add('badge-success');
-            else if (a.abgemeldet_am) badge.classList.add('badge-error');
-            else if (a.unzustellbar) badge.classList.add('badge-error');
+            if (a.status === 'bestaetigt') badge.classList.add('badge-success');
+            else if (a.status === 'unzustellbar') badge.classList.add('badge-error');
             else badge.classList.add('badge-warning');
-            badge.textContent = a.bestaetigt_am ? 'Bestätigt' : a.abgemeldet_am ? 'Abgemeldet' : a.unzustellbar ? 'Unzustellbar' : 'Unbestätigt';
+            badge.textContent = a.status === 'bestaetigt' ? 'Bestätigt' : a.status === 'unzustellbar' ? 'Unzustellbar' : 'Unbestätigt';
             statusCell.appendChild(badge);
             row.appendChild(statusCell);
 
@@ -924,7 +898,7 @@ async function renderAbonnenten(m) {
             row.appendChild(interessenCell);
 
             const dateCell = document.createElement('td');
-            dateCell.textContent = a.angemeldet_am ? new Date(a.angemeldet_am).toLocaleDateString('de-DE') : '-';
+            dateCell.textContent = a.einwilligung_am ? new Date(a.einwilligung_am).toLocaleDateString('de-DE') : '-';
             row.appendChild(dateCell);
 
             tbody.appendChild(row);
