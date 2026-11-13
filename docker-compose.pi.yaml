@@ -1,0 +1,31 @@
+# TESTINSTANZ auf dem Raspberry Pi (kein Coolify, kein Produktivbetrieb). Anleitung: PI-TESTINSTANZ.md
+#
+# Pflicht in der Datei .env neben dieser Datei (Vorlage: pi.env.beispiel; die Datei .env nie weitergeben oder einchecken):
+#   MAILNEXT_HAUPTSCHLUESSEL   mindestens 32 Zeichen, zufällig
+#   MAILNEXT_PI_ADRESSE        Adresse oder Name des Pi im Heimnetz (z. B. 192.168.1.50), unter der die Testinstanz erreicht wird
+services:
+  mailnext:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: mailnext:test
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      MAILNEXT_HAUPTSCHLUESSEL: "${MAILNEXT_HAUPTSCHLUESSEL:?MAILNEXT_HAUPTSCHLUESSEL fehlt (.env)}"
+      MAILNEXT_BASIS_URL: "http://${MAILNEXT_PI_ADRESSE:?MAILNEXT_PI_ADRESSE fehlt (.env)}:8000"
+      MAILNEXT_DATEN: "/data"
+      MAILNEXT_PROXIES: "0"
+      SORTNEXT_BASE_URL: "${SORTNEXT_BASE_URL:-https://sortnext.bst-next.de}"
+    volumes:
+      - mailnext-daten:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=4).status == 200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  mailnext-daten:

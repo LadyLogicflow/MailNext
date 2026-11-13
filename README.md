@@ -51,6 +51,7 @@ Standard je Mandant: `aus` (es geht keine Mail hinaus). `datei`: Mails landen al
 - Alles Weitere (Mail-Konten, Mandanten) liegt in der Datenbank, Zugangsdaten verschlüsselt.
 
 ## Betrieb
+Testinstanz auf dem Pi (ohne Coolify): `docker-compose.pi.yaml`, Anleitung in `PI-TESTINSTANZ.md`.
 Produktion: `docker-compose.coolify.yaml` (Volume `mailnext-data` → `/data`, Port 8000, Healthcheck `/health`).
 Deploy per Git-Tag, `main` bleibt auslieferbar. SQLite-Datei: `/data/mailnext.db` (Sicherung nötig).
 
