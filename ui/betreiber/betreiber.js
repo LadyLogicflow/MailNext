@@ -849,10 +849,10 @@ async function renderNewsletter(m) {
             const checkbox = document.createElement('input');
             checkbox.type = 'checkbox';
             checkbox.className = 'segment-rolle';
-            checkbox.value = rolle;
+            checkbox.value = rolle.wert;
             checkbox.addEventListener('change', updateEmpfaengerzahl);
             label.appendChild(checkbox);
-            label.appendChild(document.createTextNode(' ' + rolle));
+            label.appendChild(document.createTextNode(' ' + rolle.label));
             rollenGroup.appendChild(label);
         });
         form.appendChild(rollenGroup);
@@ -872,10 +872,10 @@ async function renderNewsletter(m) {
             const checkbox = document.createElement('input');
             checkbox.type = 'checkbox';
             checkbox.className = 'segment-interesse';
-            checkbox.value = interesse;
+            checkbox.value = interesse.wert;
             checkbox.addEventListener('change', updateEmpfaengerzahl);
             label.appendChild(checkbox);
-            label.appendChild(document.createTextNode(' ' + interesse));
+            label.appendChild(document.createTextNode(' ' + interesse.label));
             interessenGroup.appendChild(label);
         });
         form.appendChild(interessenGroup);
@@ -1158,7 +1158,7 @@ function renderImport(m) {
     fileInput.required = true;
     fileGroup.appendChild(fileInput);
     const fileHint = document.createElement('small');
-    fileHint.textContent = 'Maximal 3 MB, 20.000 Zeilen. Spalten: E-Mail, Status';
+    fileHint.textContent = 'Maximal 3 MB, 20.000 Zeilen. Gelesen werden nur die Spalten E-Mail, Status und Tags.';
     fileHint.style.display = 'block';
     fileHint.style.marginTop = '0.25rem';
     fileHint.style.color = '#6b7280';
@@ -1199,8 +1199,8 @@ function renderImport(m) {
         rolleSelect.appendChild(emptyOption);
         m.design.rollen.forEach(rolle => {
             const option = document.createElement('option');
-            option.value = rolle;
-            option.textContent = rolle;
+            option.value = rolle.wert;
+            option.textContent = rolle.label;
             rolleSelect.appendChild(option);
         });
         rolleGroup.appendChild(rolleSelect);
@@ -1221,9 +1221,9 @@ function renderImport(m) {
             const checkbox = document.createElement('input');
             checkbox.type = 'checkbox';
             checkbox.className = 'import-interesse';
-            checkbox.value = interesse;
+            checkbox.value = interesse.wert;
             label.appendChild(checkbox);
-            label.appendChild(document.createTextNode(' ' + interesse));
+            label.appendChild(document.createTextNode(' ' + interesse.label));
             interessenGroup.appendChild(label);
         });
         form.appendChild(interessenGroup);
@@ -1431,10 +1431,17 @@ async function importPruefen(m) {
         const kennzahlenStats = document.createElement('dl');
         kennzahlenStats.style.marginTop = '0.5rem';
         if (result.kennzahlen) {
-            addStat.call({appendChild: (el) => kennzahlenStats.appendChild(el)}, 'Bestätigt', result.kennzahlen.bestaetigt);
-            addStat.call({appendChild: (el) => kennzahlenStats.appendChild(el)}, 'Unbestätigt', result.kennzahlen.unbestaetigt);
-            addStat.call({appendChild: (el) => kennzahlenStats.appendChild(el)}, 'Abgemeldet', result.kennzahlen.abgemeldet);
-            addStat.call({appendChild: (el) => kennzahlenStats.appendChild(el)}, 'Unzustellbar', result.kennzahlen.unzustellbar);
+            [['Bestätigt', result.kennzahlen.bestaetigt], ['Unbestätigt', result.kennzahlen.unbestaetigt], ['Abgemeldet', result.kennzahlen.abgemeldet], ['Unzustellbar', result.kennzahlen.unzustellbar]].forEach(([label, wert]) => {
+                const dt = document.createElement('dt');
+                dt.textContent = label;
+                dt.style.fontWeight = '600';
+                dt.style.marginTop = '0.5rem';
+                kennzahlenStats.appendChild(dt);
+                const dd = document.createElement('dd');
+                dd.textContent = wert;
+                dd.style.marginLeft = '1rem';
+                kennzahlenStats.appendChild(dd);
+            });
         }
         vorschauDiv.appendChild(kennzahlenStats);
 
