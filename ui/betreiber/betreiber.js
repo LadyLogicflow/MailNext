@@ -1411,6 +1411,16 @@ async function importPruefen(m) {
             if (result.uebersprungen.status > 0) addStat('  - Anderer Status', result.uebersprungen.status);
         }
 
+        // Tags-Statistik
+        if (result.tags) {
+            if (result.tags.verschiedene > 0) addStat('Tags (verschiedene)', result.tags.verschiedene);
+            if (result.tags.verworfen > 0) addStat('Tags (verworfen)', result.tags.verworfen, 'warning-text');
+            if (result.tags.haeufigste && result.tags.haeufigste.length > 0) {
+                const haeufigsteText = result.tags.haeufigste.map(t => `${t.tag} (${t.anzahl})`).join(', ');
+                addStat('Tags (häufigste)', haeufigsteText);
+            }
+        }
+
         vorschauDiv.appendChild(stats);
 
         const kennzahlenTitle = document.createElement('h4');
@@ -1510,6 +1520,16 @@ async function importDurchfuehren(m) {
         addStat('Übersprungen', result.uebersprungen_gesamt);
         if (result.zusammengefuehrt > 0) addStat('Zusammengeführt', result.zusammengefuehrt);
         if (result.rolle_konflikt > 0) addStat('Rolle-Konflikt', result.rolle_konflikt);
+
+        // Tags-Statistik
+        if (result.tags) {
+            if (result.tags.verschiedene > 0) addStat('Tags (verschiedene)', result.tags.verschiedene);
+            if (result.tags.verworfen > 0) addStat('Tags (verworfen)', result.tags.verworfen);
+            if (result.tags.haeufigste && result.tags.haeufigste.length > 0) {
+                const haeufigsteText = result.tags.haeufigste.map(t => `${t.tag} (${t.anzahl})`).join(', ');
+                addStat('Tags (häufigste)', haeufigsteText);
+            }
+        }
 
         ergebnisDiv.appendChild(stats);
         ergebnisDiv.classList.remove('hidden');
