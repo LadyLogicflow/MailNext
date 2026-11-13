@@ -821,83 +821,246 @@ async function renderNewsletter(m) {
 
     renderTabs(m, card);
 
-    const subtitle = document.createElement('h3');
-    subtitle.textContent = 'Newsletter-Entwurf';
-    subtitle.style.marginBottom = '1rem';
-    card.appendChild(subtitle);
+    // Entwurfs-Liste laden
+    const loadingDiv = document.createElement('div');
+    loadingDiv.className = 'loading';
+    loadingDiv.textContent = 'Lade Entwürfe...';
+    card.appendChild(loadingDiv);
 
-    const form = document.createElement('form');
-    form.id = 'newsletter-form';
-
-    // Zielgruppe
-    const zielgruppeTitle = document.createElement('h4');
-    zielgruppeTitle.textContent = 'Zielgruppe';
-    zielgruppeTitle.style.marginBottom = '1rem';
-    form.appendChild(zielgruppeTitle);
-
-    // Rollen
-    if (m.design && m.design.rollen && m.design.rollen.length > 0) {
-        const rollenGroup = document.createElement('div');
-        rollenGroup.className = 'form-group';
-        const rollenLabel = document.createElement('label');
-        rollenLabel.textContent = 'Rollen';
-        rollenGroup.appendChild(rollenLabel);
-        m.design.rollen.forEach(rolle => {
-            const label = document.createElement('label');
-            label.style.display = 'block';
-            label.style.marginTop = '0.25rem';
-            const checkbox = document.createElement('input');
-            checkbox.type = 'checkbox';
-            checkbox.className = 'segment-rolle';
-            checkbox.value = rolle.wert;
-            checkbox.addEventListener('change', updateEmpfaengerzahl);
-            label.appendChild(checkbox);
-            label.appendChild(document.createTextNode(' ' + rolle.label));
-            rollenGroup.appendChild(label);
-        });
-        form.appendChild(rollenGroup);
-    }
-
-    // Interessen
-    if (m.design && m.design.interessen && m.design.interessen.length > 0) {
-        const interessenGroup = document.createElement('div');
-        interessenGroup.className = 'form-group';
-        const interessenLabel = document.createElement('label');
-        interessenLabel.textContent = 'Interessen';
-        interessenGroup.appendChild(interessenLabel);
-        m.design.interessen.forEach(interesse => {
-            const label = document.createElement('label');
-            label.style.display = 'block';
-            label.style.marginTop = '0.25rem';
-            const checkbox = document.createElement('input');
-            checkbox.type = 'checkbox';
-            checkbox.className = 'segment-interesse';
-            checkbox.value = interesse.wert;
-            checkbox.addEventListener('change', updateEmpfaengerzahl);
-            label.appendChild(checkbox);
-            label.appendChild(document.createTextNode(' ' + interesse.label));
-            interessenGroup.appendChild(label);
-        });
-        form.appendChild(interessenGroup);
-    }
-
-    // Tags laden
-    const tagsGroup = document.createElement('div');
-    tagsGroup.className = 'form-group';
-    const tagsLabel = document.createElement('label');
-    tagsLabel.textContent = 'Tags';
-    tagsGroup.appendChild(tagsLabel);
-    const tagsLoading = document.createElement('div');
-    tagsLoading.textContent = 'Lade Tags...';
-    tagsLoading.style.color = '#6b7280';
-    tagsLoading.style.fontSize = '0.875rem';
-    tagsGroup.appendChild(tagsLoading);
-    form.appendChild(tagsGroup);
+    main.innerHTML = '';
+    main.appendChild(card);
 
     try {
-        const tagsData = await apiCall(`/mandanten/${m.id}/abonnenten/tags`);
-        tagsLoading.remove();
+        const data = await apiCall(`/mandanten/${m.id}/entwuerfe`);
+        loadingDiv.remove();
+
+        // Entwurfs-Liste
+        if (data.entwuerfe && data.entwuerfe.length > 0) {
+            const subtitle = document.createElement('h3');
+            subtitle.textContent = 'Entwürfe';
+            card.appendChild(subtitle);
+
+            const table = document.createElement('table');
+            const thead = document.createElement('thead');
+            const headerRow = document.createElement('tr');
+            ['Betreff', 'Status', 'Ziel', 'Erstellt'].forEach(h => {
+                const th = document.createElement('th');
+                th.textContent = h;
+                headerRow.appendChild(th);
+            });
+            thead.appendChild(headerRow);
+            table.appendChild(thead);
+
+            const tbody = document.createElement('tbody');
+            data.entwuerfe.forEach(e => {
+                const row = document.createElement('tr');
+                row.style.cursor = 'pointer';
+                row.addEventListener('click', () => renderNewsletterEditor(m, e.id));
+
+                const betreffCell = document.createElement('td');
+                betreffCell.textContent = e.betreff;
+                row.appendChild(betreffCell);
+
+                const statusCell = document.createElement('td');
+                statusCell.textContent = e.status;
+                row.appendChild(statusCell);
+
+                const zielCell = document.createElement('td');
+                zielCell.textContent = e.ziel;
+                row.appendChild(zielCell);
+
+                const erstelltCell = document.createElement('td');
+                erstelltCell.textContent = new Date(e.erstellt).toLocaleString('de-DE');
+                row.appendChild(erstelltCell);
+
+                tbody.appendChild(row);
+            });
+            table.appendChild(tbody);
+            card.appendChild(table);
+        } else {
+            const noEntwuerfe = document.createElement('p');
+            noEntwuerfe.textContent = 'Noch keine Entwürfe vorhanden.';
+            noEntwuerfe.style.color = '#6b7280';
+            card.appendChild(noEntwuerfe);
+        }
+
+        // Neuen Entwurf erstellen Button
+        const newBtn = document.createElement('button');
+        newBtn.type = 'button';
+        newBtn.className = 'btn btn-primary';
+        newBtn.textContent = 'Neuer Entwurf';
+        newBtn.style.marginTop = '1rem';
+        newBtn.addEventListener('click', () => renderNewsletterEditor(m, null));
+        card.appendChild(newBtn);
+
+    } catch (err) {
+        loadingDiv.textContent = 'Fehler: ' + err.message;
+        loadingDiv.style.color = 'var(--color-error)';
+    }
+}
+
+async function renderNewsletterEditor(m, entwurfId) {
+    const main = document.getElementById('main');
+    const card = document.createElement('div');
+    card.className = 'card';
+
+    const title = document.createElement('h2');
+    title.textContent = m.name;
+    card.appendChild(title);
+
+    renderTabs(m, card);
+
+    const subtitle = document.createElement('h3');
+    subtitle.textContent = entwurfId ? 'Entwurf bearbeiten' : 'Neuer Entwurf';
+    card.appendChild(subtitle);
+
+    const loadingDiv = document.createElement('div');
+    loadingDiv.className = 'loading';
+    loadingDiv.textContent = 'Lade...';
+    card.appendChild(loadingDiv);
+
+    main.innerHTML = '';
+    main.appendChild(card);
+
+    let entwurf = null;
+    let tagsData = null;
+
+    try {
+        // Paralleles Laden
+        const promises = [apiCall(`/mandanten/${m.id}/abonnenten/tags`)];
+        if (entwurfId) {
+            promises.push(apiCall(`/mandanten/${m.id}/entwuerfe/${entwurfId}`));
+        }
+        const results = await Promise.all(promises);
+        tagsData = results[0];
+        if (entwurfId) entwurf = results[1];
+
+        loadingDiv.remove();
+
+        // Formular
+        const form = document.createElement('form');
+        form.id = 'newsletter-form';
+
+        // Betreff
+        const betreffGroup = document.createElement('div');
+        betreffGroup.className = 'form-group';
+        const betreffLabel = document.createElement('label');
+        betreffLabel.textContent = 'Betreff *';
+        betreffGroup.appendChild(betreffLabel);
+        const betreffInput = document.createElement('input');
+        betreffInput.type = 'text';
+        betreffInput.id = 'newsletter-betreff';
+        betreffInput.maxLength = 150;
+        betreffInput.required = true;
+        betreffInput.value = entwurf ? entwurf.betreff : '';
+        betreffGroup.appendChild(betreffInput);
+        const betreffHint = document.createElement('small');
+        betreffHint.textContent = '1-150 Zeichen';
+        betreffGroup.appendChild(betreffHint);
+        form.appendChild(betreffGroup);
+
+        // Text
+        const textGroup = document.createElement('div');
+        textGroup.className = 'form-group';
+        const textLabel = document.createElement('label');
+        textLabel.textContent = 'Text *';
+        textGroup.appendChild(textLabel);
+        const textInput = document.createElement('textarea');
+        textInput.id = 'newsletter-text';
+        textInput.rows = 12;
+        textInput.maxLength = 50000;
+        textInput.required = true;
+        textInput.value = entwurf ? entwurf.text : '';
+        textGroup.appendChild(textInput);
+        const textHint = document.createElement('small');
+        textHint.textContent = '1-50000 Zeichen. Leerzeilen sind Absätze, https-URLs werden automatisch verlinkt.';
+        textGroup.appendChild(textHint);
+        form.appendChild(textGroup);
+
+        // Ziel
+        const zielGroup = document.createElement('div');
+        zielGroup.className = 'form-group';
+        const zielLabel = document.createElement('label');
+        zielLabel.textContent = 'Versand an';
+        zielGroup.appendChild(zielLabel);
+        ['testliste', 'abonnenten'].forEach(ziel => {
+            const label = document.createElement('label');
+            label.style.display = 'inline-block';
+            label.style.marginRight = '1.5rem';
+            const radio = document.createElement('input');
+            radio.type = 'radio';
+            radio.name = 'ziel';
+            radio.value = ziel;
+            radio.checked = entwurf ? entwurf.ziel === ziel : ziel === 'testliste';
+            label.appendChild(radio);
+            label.appendChild(document.createTextNode(' ' + (ziel === 'testliste' ? 'Testliste' : 'Abonnenten')));
+            zielGroup.appendChild(label);
+        });
+        form.appendChild(zielGroup);
+
+        // Zielgruppe Titel
+        const zielgruppeTitle = document.createElement('h4');
+        zielgruppeTitle.textContent = 'Zielgruppe (Segment)';
+        zielgruppeTitle.style.marginTop = '1.5rem';
+        form.appendChild(zielgruppeTitle);
+
+        // Rollen
+        if (m.design && m.design.rollen && m.design.rollen.length > 0) {
+            const rollenGroup = document.createElement('div');
+            rollenGroup.className = 'form-group';
+            const rollenLabel = document.createElement('label');
+            rollenLabel.textContent = 'Rollen';
+            rollenGroup.appendChild(rollenLabel);
+            m.design.rollen.forEach(rolle => {
+                const label = document.createElement('label');
+                label.style.display = 'block';
+                label.style.marginTop = '0.25rem';
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.className = 'segment-rolle';
+                checkbox.value = rolle.wert;
+                if (entwurf && entwurf.segment.rollen && entwurf.segment.rollen.includes(rolle.wert)) {
+                    checkbox.checked = true;
+                }
+                label.appendChild(checkbox);
+                label.appendChild(document.createTextNode(' ' + rolle.label));
+                rollenGroup.appendChild(label);
+            });
+            form.appendChild(rollenGroup);
+        }
+
+        // Interessen
+        if (m.design && m.design.interessen && m.design.interessen.length > 0) {
+            const interessenGroup = document.createElement('div');
+            interessenGroup.className = 'form-group';
+            const interessenLabel = document.createElement('label');
+            interessenLabel.textContent = 'Interessen';
+            interessenGroup.appendChild(interessenLabel);
+            m.design.interessen.forEach(interesse => {
+                const label = document.createElement('label');
+                label.style.display = 'block';
+                label.style.marginTop = '0.25rem';
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.className = 'segment-interesse';
+                checkbox.value = interesse.wert;
+                if (entwurf && entwurf.segment.interessen && entwurf.segment.interessen.includes(interesse.wert)) {
+                    checkbox.checked = true;
+                }
+                label.appendChild(checkbox);
+                label.appendChild(document.createTextNode(' ' + interesse.label));
+                interessenGroup.appendChild(label);
+            });
+            form.appendChild(interessenGroup);
+        }
+
+        // Tags
         if (tagsData.tags && tagsData.tags.length > 0) {
+            const tagsGroup = document.createElement('div');
+            tagsGroup.className = 'form-group';
+            const tagsLabel = document.createElement('label');
+            tagsLabel.textContent = 'Tags';
+            tagsGroup.appendChild(tagsLabel);
             tagsData.tags.forEach(tagObj => {
                 const label = document.createElement('label');
                 label.style.display = 'block';
@@ -906,103 +1069,250 @@ async function renderNewsletter(m) {
                 checkbox.type = 'checkbox';
                 checkbox.className = 'segment-tag';
                 checkbox.value = tagObj.tag;
-                checkbox.addEventListener('change', updateEmpfaengerzahl);
+                if (entwurf && entwurf.segment.tags && entwurf.segment.tags.includes(tagObj.tag)) {
+                    checkbox.checked = true;
+                }
                 label.appendChild(checkbox);
                 label.appendChild(document.createTextNode(' ' + tagObj.tag + ' (' + tagObj.anzahl + ')'));
                 tagsGroup.appendChild(label);
             });
-        } else {
-            const noTags = document.createElement('div');
-            noTags.textContent = 'Keine Tags vorhanden';
-            noTags.style.color = '#6b7280';
-            noTags.style.fontSize = '0.875rem';
-            tagsGroup.appendChild(noTags);
-        }
-    } catch (err) {
-        tagsLoading.textContent = 'Fehler beim Laden: ' + err.message;
-        tagsLoading.style.color = 'var(--color-error)';
-    }
+            form.appendChild(tagsGroup);
 
-    // Tags-Modus
-    const tagsModusGroup = document.createElement('div');
-    tagsModusGroup.className = 'form-group';
-    const tagsModusLabel = document.createElement('label');
-    tagsModusLabel.textContent = 'Tags-Modus (bei mehreren Tags)';
-    tagsModusGroup.appendChild(tagsModusLabel);
-    ['oder', 'und'].forEach(mode => {
-        const label = document.createElement('label');
-        label.style.display = 'inline-block';
-        label.style.marginRight = '1rem';
-        const radio = document.createElement('input');
-        radio.type = 'radio';
-        radio.name = 'tags_modus';
-        radio.value = mode;
-        radio.checked = mode === 'oder';
-        radio.addEventListener('change', updateEmpfaengerzahl);
-        label.appendChild(radio);
-        label.appendChild(document.createTextNode(' ' + mode.toUpperCase()));
-        tagsModusGroup.appendChild(label);
-    });
-    const tagsModusHint = document.createElement('small');
-    tagsModusHint.textContent = 'ODER: mind. 1 Tag, UND: alle Tags. Zwischen Rolle/Interessen/Tags gilt immer UND.';
-    tagsModusHint.style.display = 'block';
-    tagsModusHint.style.marginTop = '0.25rem';
-    tagsModusHint.style.color = '#6b7280';
-    tagsModusGroup.appendChild(tagsModusHint);
-    form.appendChild(tagsModusGroup);
-
-    // Empfängerzahl
-    const empfaengerDiv = document.createElement('div');
-    empfaengerDiv.id = 'newsletter-empfaenger';
-    empfaengerDiv.style.marginTop = '1.5rem';
-    empfaengerDiv.style.padding = '1rem';
-    empfaengerDiv.style.background = '#f0f9ff';
-    empfaengerDiv.style.borderRadius = '6px';
-    const empfaengerText = document.createElement('strong');
-    empfaengerText.id = 'empfaenger-anzahl';
-    empfaengerText.textContent = 'Empfänger: 0';
-    empfaengerDiv.appendChild(empfaengerText);
-    form.appendChild(empfaengerDiv);
-
-    const errorDiv = document.createElement('div');
-    errorDiv.className = 'error hidden';
-    errorDiv.id = 'newsletter-error';
-    form.appendChild(errorDiv);
-
-    card.appendChild(form);
-    main.innerHTML = '';
-    main.appendChild(card);
-
-    // Empfängerzahl initial laden
-    updateEmpfaengerzahl();
-
-    async function updateEmpfaengerzahl() {
-        const errorDiv = document.getElementById('newsletter-error');
-        errorDiv.classList.add('hidden');
-
-        const rollen = Array.from(document.querySelectorAll('.segment-rolle:checked')).map(cb => cb.value);
-        const interessen = Array.from(document.querySelectorAll('.segment-interesse:checked')).map(cb => cb.value);
-        const tags = Array.from(document.querySelectorAll('.segment-tag:checked')).map(cb => cb.value);
-        const tags_modus = document.querySelector('input[name="tags_modus"]:checked')?.value || 'oder';
-
-        const segment = {};
-        if (rollen.length > 0) segment.rollen = rollen;
-        if (interessen.length > 0) segment.interessen = interessen;
-        if (tags.length > 0) {
-            segment.tags = tags;
-            segment.tags_modus = tags_modus;
-        }
-
-        try {
-            const result = await apiCall(`/mandanten/${m.id}/abonnenten/vorschau`, {
-                method: 'POST',
-                body: JSON.stringify({segment})
+            // Tags-Modus
+            const tagsModusGroup = document.createElement('div');
+            tagsModusGroup.className = 'form-group';
+            const tagsModusLabel = document.createElement('label');
+            tagsModusLabel.textContent = 'Tags-Modus';
+            tagsModusGroup.appendChild(tagsModusLabel);
+            ['oder', 'und'].forEach(mode => {
+                const label = document.createElement('label');
+                label.style.display = 'inline-block';
+                label.style.marginRight = '1rem';
+                const radio = document.createElement('input');
+                radio.type = 'radio';
+                radio.name = 'tags_modus';
+                radio.value = mode;
+                radio.checked = entwurf ? (entwurf.segment.tags_modus || 'oder') === mode : mode === 'oder';
+                label.appendChild(radio);
+                label.appendChild(document.createTextNode(' ' + mode.toUpperCase()));
+                tagsModusGroup.appendChild(label);
             });
-            document.getElementById('empfaenger-anzahl').textContent = `Empfänger: ${result.anzahl}`;
-        } catch (err) {
-            errorDiv.textContent = err.message;
-            errorDiv.classList.remove('hidden');
+            const tagsModusHint = document.createElement('small');
+            tagsModusHint.textContent = 'ODER: mind. 1 Tag, UND: alle Tags. Zwischen Rolle/Interessen/Tags gilt immer UND.';
+            tagsModusHint.style.display = 'block';
+            tagsModusHint.style.marginTop = '0.25rem';
+            tagsModusHint.style.color = '#6b7280';
+            tagsModusGroup.appendChild(tagsModusHint);
+            form.appendChild(tagsModusGroup);
         }
+
+        // Empfängerzahl-Vorschau
+        const vorschauDiv = document.createElement('div');
+        vorschauDiv.style.marginTop = '1.5rem';
+        vorschauDiv.style.padding = '1rem';
+        vorschauDiv.style.background = '#f0f9ff';
+        vorschauDiv.style.borderRadius = '6px';
+        const vorschauText = document.createElement('strong');
+        vorschauText.id = 'vorschau-anzahl';
+        vorschauText.textContent = 'Empfänger: ...';
+        vorschauDiv.appendChild(vorschauText);
+        const vorschauBtn = document.createElement('button');
+        vorschauBtn.type = 'button';
+        vorschauBtn.className = 'btn btn-secondary';
+        vorschauBtn.textContent = 'Empfänger aktualisieren';
+        vorschauBtn.style.marginLeft = '1rem';
+        vorschauBtn.addEventListener('click', updateVorschau);
+        vorschauDiv.appendChild(vorschauBtn);
+        form.appendChild(vorschauDiv);
+
+        const errorDiv = document.createElement('div');
+        errorDiv.className = 'error hidden';
+        errorDiv.id = 'newsletter-error';
+        form.appendChild(errorDiv);
+
+        // Buttons
+        const actions = document.createElement('div');
+        actions.className = 'form-actions';
+        actions.style.marginTop = '1.5rem';
+
+        const saveBtn = document.createElement('button');
+        saveBtn.type = 'submit';
+        saveBtn.className = 'btn btn-primary';
+        saveBtn.textContent = entwurfId ? 'Speichern' : 'Entwurf anlegen';
+        actions.appendChild(saveBtn);
+
+        if (entwurfId && entwurf.status === 'entwurf') {
+            const testmailBtn = document.createElement('button');
+            testmailBtn.type = 'button';
+            testmailBtn.className = 'btn btn-secondary';
+            testmailBtn.textContent = 'Testmail senden';
+            testmailBtn.addEventListener('click', () => sendTestmail(m, entwurfId));
+            actions.appendChild(testmailBtn);
+
+            const freigebenBtn = document.createElement('button');
+            freigebenBtn.type = 'button';
+            freigebenBtn.className = 'btn btn-primary';
+            freigebenBtn.textContent = 'Freigeben & Versenden';
+            freigebenBtn.addEventListener('click', () => freigebenEntwurf(m, entwurfId, entwurf.content_hash));
+            actions.appendChild(freigebenBtn);
+        }
+
+        const backBtn = document.createElement('button');
+        backBtn.type = 'button';
+        backBtn.className = 'btn btn-secondary';
+        backBtn.textContent = 'Zurück zur Liste';
+        backBtn.addEventListener('click', () => renderNewsletter(m));
+        actions.appendChild(backBtn);
+
+        form.appendChild(actions);
+
+        // Submit Handler
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            await saveEntwurf(m, entwurfId);
+        });
+
+        card.appendChild(form);
+
+        // Initial Vorschau laden wenn bestehender Entwurf
+        if (entwurfId) {
+            loadEmpfaengervorschau(m, entwurfId);
+        } else {
+            updateVorschau();
+        }
+
+        async function updateVorschau() {
+            const errorDiv = document.getElementById('newsletter-error');
+            errorDiv.classList.add('hidden');
+
+            const rollen = Array.from(document.querySelectorAll('.segment-rolle:checked')).map(cb => cb.value);
+            const interessen = Array.from(document.querySelectorAll('.segment-interesse:checked')).map(cb => cb.value);
+            const tags = Array.from(document.querySelectorAll('.segment-tag:checked')).map(cb => cb.value);
+            const tags_modus = document.querySelector('input[name="tags_modus"]:checked')?.value || 'oder';
+
+            const segment = {};
+            if (rollen.length > 0) segment.rollen = rollen;
+            if (interessen.length > 0) segment.interessen = interessen;
+            if (tags.length > 0) {
+                segment.tags = tags;
+                segment.tags_modus = tags_modus;
+            }
+
+            try {
+                const result = await apiCall(`/mandanten/${m.id}/abonnenten/vorschau`, {
+                    method: 'POST',
+                    body: JSON.stringify({segment})
+                });
+                document.getElementById('vorschau-anzahl').textContent = `Empfänger: ${result.anzahl}`;
+            } catch (err) {
+                errorDiv.textContent = err.message;
+                errorDiv.classList.remove('hidden');
+            }
+        }
+
+        async function loadEmpfaengervorschau(mandant, eid) {
+            try {
+                const result = await apiCall(`/mandanten/${mandant.id}/entwuerfe/${eid}/empfaengervorschau`);
+                document.getElementById('vorschau-anzahl').textContent = `Empfänger: ${result.anzahl}`;
+            } catch (err) {
+                document.getElementById('vorschau-anzahl').textContent = 'Fehler beim Laden';
+            }
+        }
+
+        async function saveEntwurf(mandant, eid) {
+            const errorDiv = document.getElementById('newsletter-error');
+            errorDiv.classList.add('hidden');
+
+            const betreff = document.getElementById('newsletter-betreff').value.trim();
+            const text = document.getElementById('newsletter-text').value.trim();
+            const ziel = document.querySelector('input[name="ziel"]:checked').value;
+
+            if (!betreff || betreff.length < 1 || betreff.length > 150) {
+                errorDiv.textContent = 'Betreff: 1-150 Zeichen erforderlich';
+                errorDiv.classList.remove('hidden');
+                return;
+            }
+
+            if (!text || text.length < 1 || text.length > 50000) {
+                errorDiv.textContent = 'Text: 1-50000 Zeichen erforderlich';
+                errorDiv.classList.remove('hidden');
+                return;
+            }
+
+            const rollen = Array.from(document.querySelectorAll('.segment-rolle:checked')).map(cb => cb.value);
+            const interessen = Array.from(document.querySelectorAll('.segment-interesse:checked')).map(cb => cb.value);
+            const tags = Array.from(document.querySelectorAll('.segment-tag:checked')).map(cb => cb.value);
+            const tags_modus = document.querySelector('input[name="tags_modus"]:checked')?.value || 'oder';
+
+            const segment = {};
+            if (rollen.length > 0) segment.rollen = rollen;
+            if (interessen.length > 0) segment.interessen = interessen;
+            if (tags.length > 0) {
+                segment.tags = tags;
+                segment.tags_modus = tags_modus;
+            }
+
+            try {
+                if (eid) {
+                    await apiCall(`/mandanten/${mandant.id}/entwuerfe/${eid}`, {
+                        method: 'PUT',
+                        body: JSON.stringify({betreff, text, ziel, segment})
+                    });
+                    showToast('Entwurf gespeichert', 'success');
+                    renderNewsletterEditor(mandant, eid);
+                } else {
+                    const result = await apiCall(`/mandanten/${mandant.id}/entwuerfe`, {
+                        method: 'POST',
+                        body: JSON.stringify({betreff, text, ziel, segment})
+                    });
+                    showToast('Entwurf erstellt', 'success');
+                    renderNewsletterEditor(mandant, result.id);
+                }
+            } catch (err) {
+                errorDiv.textContent = err.message;
+                errorDiv.classList.remove('hidden');
+            }
+        }
+
+        async function sendTestmail(mandant, eid) {
+            const an = prompt('Testmail an (leer = Testliste):');
+            if (an === null) return;
+
+            try {
+                await apiCall(`/mandanten/${mandant.id}/entwuerfe/${eid}/testmail`, {
+                    method: 'POST',
+                    body: JSON.stringify({an: an.trim() || null})
+                });
+                showToast('Testmail versendet', 'success');
+                renderNewsletterEditor(mandant, eid);
+            } catch (err) {
+                alert('Fehler: ' + err.message);
+            }
+        }
+
+        async function freigebenEntwurf(mandant, eid, contentHash) {
+            try {
+                const vorschauResult = await apiCall(`/mandanten/${mandant.id}/entwuerfe/${eid}/empfaengervorschau`);
+                const anzahl = vorschauResult.anzahl;
+
+                if (!confirm(`Newsletter jetzt an ${anzahl} Empfänger versenden?`)) {
+                    return;
+                }
+
+                await apiCall(`/mandanten/${mandant.id}/entwuerfe/${eid}/freigeben`, {
+                    method: 'POST',
+                    body: JSON.stringify({content_hash: contentHash, bestaetigt: true})
+                });
+                showToast('Newsletter freigegeben & Versand gestartet', 'success');
+                renderNewsletter(mandant);
+            } catch (err) {
+                alert('Fehler: ' + err.message);
+            }
+        }
+
+    } catch (err) {
+        loadingDiv.textContent = 'Fehler: ' + err.message;
+        loadingDiv.style.color = 'var(--color-error)';
     }
 }
 
