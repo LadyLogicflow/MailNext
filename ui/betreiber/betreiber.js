@@ -138,9 +138,7 @@ function renderMandantenListe() {
         const nameCell = document.createElement('td');
         const nameBtn = document.createElement('button');
         nameBtn.textContent = m.name;
-        nameBtn.style.all = 'unset';
-        nameBtn.style.cursor = 'pointer';
-        nameBtn.style.textDecoration = 'underline';
+        nameBtn.className = 'tabelle-link';
         nameBtn.addEventListener('click', () => showMandantDetails(m.id));
         nameCell.appendChild(nameBtn);
         row.appendChild(nameCell);
@@ -286,14 +284,41 @@ function renderMandantAnlegen() {
 }
 
 // Mandant Details + Design (Schritt 2 - Basis-Version)
-async function showMandantDetails(mandantId) {
+async function showMandantDetails(mandantId, tab = 'details') {
     try {
         const m = await apiCall(`/mandanten/${mandantId}`);
         state.currentMandant = m;
-        renderMandantDetails(m);
+        state.currentTab = tab;
+        if (tab === 'abonnenten') {
+            renderAbonnenten(m);
+        } else if (tab === 'versand') {
+            renderVersand(m);
+        } else {
+            renderMandantDetails(m);
+        }
     } catch (err) {
         showToast(err.message, 'error');
     }
+}
+
+function renderTabs(m, card) {
+    const tabsNav = document.createElement('div');
+    tabsNav.style.marginBottom = '1.5rem';
+    tabsNav.style.borderBottom = '1px solid var(--color-border)';
+    const tabs = [{id: 'details', label: 'Einstellungen'}, {id: 'versand', label: 'Versand'}, {id: 'abonnenten', label: 'Abonnenten'}];
+    tabs.forEach(tab => {
+        const btn = document.createElement('button');
+        btn.textContent = tab.label;
+        btn.style.padding = '0.5rem 1rem';
+        btn.style.background = 'none';
+        btn.style.border = 'none';
+        btn.style.borderBottom = state.currentTab === tab.id ? '2px solid var(--color-primary)' : '2px solid transparent';
+        btn.style.cursor = 'pointer';
+        btn.style.fontWeight = state.currentTab === tab.id ? '600' : 'normal';
+        btn.addEventListener('click', () => showMandantDetails(m.id, tab.id));
+        tabsNav.appendChild(btn);
+    });
+    card.appendChild(tabsNav);
 }
 
 function renderMandantDetails(m) {
@@ -304,6 +329,8 @@ function renderMandantDetails(m) {
     const title = document.createElement('h2');
     title.textContent = m.name;
     card.appendChild(title);
+
+    renderTabs(m, card);
 
     const errorDiv = document.createElement('div');
     errorDiv.className = 'error hidden';
@@ -446,7 +473,6 @@ function renderMandantDetails(m) {
         errorSpan.id = `error-${feld.id}`;
         errorSpan.style.color = 'var(--color-error)';
         errorSpan.style.fontSize = '0.875rem';
-        errorSpan.style.display = 'block';
         errorSpan.style.marginTop = '0.25rem';
         g.appendChild(errorSpan);
         const small = document.createElement('small');
@@ -647,6 +673,243 @@ function renderMandantDetails(m) {
 
     main.innerHTML = '';
     main.appendChild(card);
+}
+
+// Versand (Schritt 3)
+async function renderVersand(m) {
+    const main = document.getElementById('main');
+    const card = document.createElement('div');
+    card.className = 'card';
+
+    const title = document.createElement('h2');
+    title.textContent = m.name;
+    card.appendChild(title);
+
+    renderTabs(m, card);
+
+    const form = document.createElement('form');
+    const errorDiv = document.createElement('div');
+    errorDiv.className = 'error hidden';
+    errorDiv.id = 'versand-error';
+    form.appendChild(errorDiv);
+
+    // Modus
+    const modusGroup = document.createElement('div');
+    modusGroup.className = 'form-group';
+    const modusLabel = document.createElement('label');
+    modusLabel.textContent = 'Versandmodus';
+    modusGroup.appendChild(modusLabel);
+    ['aus', 'datei', 'smtp'].forEach(mode => {
+        const lbl = document.createElement('label');
+        lbl.style.display = 'block';
+        lbl.style.marginBottom = '0.5rem';
+        const radio = document.createElement('input');
+        radio.type = 'radio';
+        radio.name = 'versandmodus';
+        radio.value = mode;
+        radio.checked = m.versand.versandmodus === mode;
+        radio.addEventListener('change', () => {
+            document.getElementById('smtp-fields').style.display = mode === 'smtp' ? 'block' : 'none';
+        });
+        lbl.appendChild(radio);
+        lbl.appendChild(document.createTextNode(' ' + mode.toUpperCase()));
+        modusGroup.appendChild(lbl);
+    });
+    form.appendChild(modusGroup);
+
+    // SMTP-Felder
+    const smtpDiv = document.createElement('div');
+    smtpDiv.id = 'smtp-fields';
+    smtpDiv.style.display = m.versand.versandmodus === 'smtp' ? 'block' : 'none';
+    [
+        {id: 'smtp_host', label: 'Host', type: 'text', placeholder: 'smtp.example.com'},
+        {id: 'smtp_port', label: 'Port', type: 'number', placeholder: '587'},
+        {id: 'smtp_benutzer', label: 'Benutzer', type: 'text'},
+        {id: 'smtp_passwort', label: 'Passwort', type: 'password'},
+    ].forEach(f => {
+        const g = document.createElement('div');
+        g.className = 'form-group';
+        const l = document.createElement('label');
+        l.textContent = f.label + (m.versand.gesetzt[f.id] ? ' (gesetzt)' : '');
+        g.appendChild(l);
+        const i = document.createElement('input');
+        i.type = f.type;
+        i.id = f.id;
+        if (f.placeholder) i.placeholder = f.placeholder;
+        if (f.id === 'smtp_passwort') i.autocomplete = 'new-password';
+        if (f.id === 'smtp_benutzer') i.autocomplete = 'off';
+        g.appendChild(i);
+        smtpDiv.appendChild(g);
+    });
+
+    const verschlGroup = document.createElement('div');
+    verschlGroup.className = 'form-group';
+    const verschlLabel = document.createElement('label');
+    verschlLabel.textContent = 'Verschlüsselung';
+    verschlGroup.appendChild(verschlLabel);
+    const verschlSelect = document.createElement('select');
+    verschlSelect.id = 'smtp_verschluesselung';
+    const defaultOpt = document.createElement('option');
+    defaultOpt.value = '';
+    defaultOpt.textContent = '(unverändert)';
+    verschlSelect.appendChild(defaultOpt);
+    ['ssl', 'starttls'].forEach(v => {
+        const opt = document.createElement('option');
+        opt.value = v;
+        opt.textContent = v.toUpperCase();
+        verschlSelect.appendChild(opt);
+    });
+    verschlGroup.appendChild(verschlSelect);
+    smtpDiv.appendChild(verschlGroup);
+    form.appendChild(smtpDiv);
+
+    // Submit
+    const actions = document.createElement('div');
+    actions.className = 'form-actions';
+    const submitBtn = document.createElement('button');
+    submitBtn.type = 'submit';
+    submitBtn.className = 'btn btn-primary';
+    submitBtn.textContent = 'Speichern';
+    actions.appendChild(submitBtn);
+    form.appendChild(actions);
+
+    form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        errorDiv.className = 'error hidden';
+        const modus = form.querySelector('input[name="versandmodus"]:checked').value;
+        const body = {versandmodus: modus};
+        if (modus === 'smtp') {
+            ['smtp_host', 'smtp_port', 'smtp_benutzer', 'smtp_passwort', 'smtp_verschluesselung'].forEach(f => {
+                const val = document.getElementById(f).value.trim();
+                if (val) body[f] = f === 'smtp_port' ? parseInt(val) : val;
+            });
+        }
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Wird gespeichert...';
+        try {
+            await apiCall(`/mandanten/${m.id}/versand`, {method: 'PUT', body: JSON.stringify(body)});
+            showToast('Versand-Einstellungen gespeichert', 'success');
+            await showMandantDetails(m.id, 'versand');
+        } catch (err) {
+            errorDiv.textContent = err.message;
+            errorDiv.className = 'error';
+        } finally {
+            submitBtn.disabled = false;
+            submitBtn.textContent = 'Speichern';
+        }
+    });
+
+    card.appendChild(form);
+    main.innerHTML = '';
+    main.appendChild(card);
+}
+
+// Abonnenten (Schritt 3)
+async function renderAbonnenten(m) {
+    const main = document.getElementById('main');
+    const card = document.createElement('div');
+    card.className = 'card';
+
+    const title = document.createElement('h2');
+    title.textContent = m.name;
+    card.appendChild(title);
+
+    renderTabs(m, card);
+
+    const loadingDiv = document.createElement('div');
+    loadingDiv.className = 'loading';
+    loadingDiv.textContent = 'Lade Abonnenten...';
+    card.appendChild(loadingDiv);
+
+    main.innerHTML = '';
+    main.appendChild(card);
+
+    try {
+        const data = await apiCall(`/mandanten/${m.id}/abonnenten`);
+        loadingDiv.remove();
+
+        // Kennzahlen
+        const stats = data.kennzahlen || {};
+        const statsDiv = document.createElement('div');
+        statsDiv.style.display = 'grid';
+        statsDiv.style.gridTemplateColumns = 'repeat(4, 1fr)';
+        statsDiv.style.gap = '1rem';
+        statsDiv.style.marginBottom = '1.5rem';
+        [{label: 'Bestätigt', value: stats.bestaetigt || 0, color: 'success'},
+         {label: 'Unbestätigt', value: stats.unbestaetigt || 0, color: 'warning'},
+         {label: 'Abgemeldet', value: stats.abgemeldet || 0, color: 'error'},
+         {label: 'Unzustellbar', value: stats.unzustellbar || 0, color: 'error'}
+        ].forEach(s => {
+            const box = document.createElement('div');
+            box.style.padding = '1rem';
+            box.style.background = '#f9fafb';
+            box.style.borderRadius = '6px';
+            box.style.textAlign = 'center';
+            const num = document.createElement('div');
+            num.style.fontSize = '2rem';
+            num.style.fontWeight = '700';
+            num.textContent = s.value;
+            box.appendChild(num);
+            const lbl = document.createElement('div');
+            lbl.style.fontSize = '0.875rem';
+            lbl.style.color = '#6b7280';
+            lbl.textContent = s.label;
+            box.appendChild(lbl);
+            statsDiv.appendChild(box);
+        });
+        card.appendChild(statsDiv);
+
+        // Tabelle
+        const table = document.createElement('table');
+        const thead = document.createElement('thead');
+        const headerRow = document.createElement('tr');
+        ['E-Mail', 'Status', 'Rolle', 'Interessen', 'Angemeldet'].forEach(h => {
+            const th = document.createElement('th');
+            th.textContent = h;
+            headerRow.appendChild(th);
+        });
+        thead.appendChild(headerRow);
+        table.appendChild(thead);
+
+        const tbody = document.createElement('tbody');
+        (data.abonnenten || []).forEach(a => {
+            const row = document.createElement('tr');
+
+            const emailCell = document.createElement('td');
+            emailCell.textContent = a.email || '(pseudonymisiert)';
+            row.appendChild(emailCell);
+
+            const statusCell = document.createElement('td');
+            const badge = document.createElement('span');
+            badge.className = 'badge';
+            if (a.status === 'bestaetigt') badge.classList.add('badge-success');
+            else if (a.status === 'unzustellbar') badge.classList.add('badge-error');
+            else badge.classList.add('badge-warning');
+            badge.textContent = a.status === 'bestaetigt' ? 'Bestätigt' : a.status === 'unzustellbar' ? 'Unzustellbar' : 'Unbestätigt';
+            statusCell.appendChild(badge);
+            row.appendChild(statusCell);
+
+            const rolleCell = document.createElement('td');
+            rolleCell.textContent = a.rolle || '-';
+            row.appendChild(rolleCell);
+
+            const interessenCell = document.createElement('td');
+            interessenCell.textContent = (a.interessen || []).join(', ') || '-';
+            row.appendChild(interessenCell);
+
+            const dateCell = document.createElement('td');
+            dateCell.textContent = a.einwilligung_am ? new Date(a.einwilligung_am).toLocaleDateString('de-DE') : '-';
+            row.appendChild(dateCell);
+
+            tbody.appendChild(row);
+        });
+        table.appendChild(tbody);
+        card.appendChild(table);
+
+    } catch (err) {
+        loadingDiv.textContent = 'Fehler: ' + err.message;
+        loadingDiv.style.color = 'var(--color-error)';
+    }
 }
 
 // Initialisierung
