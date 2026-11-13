@@ -136,7 +136,13 @@ function renderMandantenListe() {
         row.appendChild(slugCell);
 
         const nameCell = document.createElement('td');
-        nameCell.textContent = m.name;
+        const nameBtn = document.createElement('button');
+        nameBtn.textContent = m.name;
+        nameBtn.style.all = 'unset';
+        nameBtn.style.cursor = 'pointer';
+        nameBtn.style.textDecoration = 'underline';
+        nameBtn.addEventListener('click', () => showMandantDetails(m.id));
+        nameCell.appendChild(nameBtn);
         row.appendChild(nameCell);
 
         const statusCell = document.createElement('td');
@@ -154,9 +160,6 @@ function renderMandantenListe() {
             ? `${bestaetigt} bestätigt, ${unbestaetigt} unbestätigt`
             : `${bestaetigt} bestätigt`;
         row.appendChild(aboCell);
-
-        // Click → Details
-        row.addEventListener('click', () => showMandantDetails(m.id));
 
         tbody.appendChild(row);
     });
@@ -328,9 +331,13 @@ function renderMandantDetails(m) {
     const aktivGroup = document.createElement('div');
     aktivGroup.className = 'form-group';
     const aktivLabel = document.createElement('label');
-    aktivLabel.innerHTML = '<input type="checkbox" id="edit-aktiv"> Aktiv';
+    const aktivCheckbox = document.createElement('input');
+    aktivCheckbox.type = 'checkbox';
+    aktivCheckbox.id = 'edit-aktiv';
+    aktivCheckbox.checked = m.aktiv;
+    aktivLabel.appendChild(aktivCheckbox);
+    aktivLabel.appendChild(document.createTextNode(' Aktiv'));
     aktivGroup.appendChild(aktivLabel);
-    aktivGroup.querySelector('#edit-aktiv').checked = m.aktiv;
     form.appendChild(aktivGroup);
 
     // Farben (Basis)
@@ -417,6 +424,8 @@ function renderMandantDetails(m) {
     listenTitle.textContent = 'Rollen, Interessen, CORS';
     form.appendChild(listenTitle);
 
+    const jsonErrors = {};
+    const jsonTextareas = [];
     [
         {id: 'rollen', label: 'Rollen (JSON)', help: '[{"wert":"role1","label":"Rolle 1"}]'},
         {id: 'interessen', label: 'Interessen (JSON)', help: '[{"wert":"int1","label":"Interesse 1"}]'},
@@ -432,9 +441,20 @@ function renderMandantDetails(m) {
         t.value = JSON.stringify(m.design[feld.id] || [], null, 2);
         t.rows = 3;
         g.appendChild(t);
+        const errorSpan = document.createElement('span');
+        errorSpan.className = 'field-error hidden';
+        errorSpan.id = `error-${feld.id}`;
+        errorSpan.style.color = 'var(--color-error)';
+        errorSpan.style.fontSize = '0.875rem';
+        errorSpan.style.display = 'block';
+        errorSpan.style.marginTop = '0.25rem';
+        g.appendChild(errorSpan);
         const small = document.createElement('small');
         small.textContent = feld.help;
         g.appendChild(small);
+
+        jsonTextareas.push({textarea: t, errorSpan, feldId: feld.id});
+
         form.appendChild(g);
     });
 
@@ -442,6 +462,28 @@ function renderMandantDetails(m) {
     const einwTitle = document.createElement('h3');
     einwTitle.textContent = 'Einwilligungstext';
     form.appendChild(einwTitle);
+
+    // Bestehende Einwilligungen anzeigen
+    if (m.einwilligungen && m.einwilligungen.length > 0) {
+        const einwListe = document.createElement('div');
+        einwListe.style.marginBottom = '1rem';
+        einwListe.style.padding = '0.75rem';
+        einwListe.style.background = '#f9fafb';
+        einwListe.style.borderRadius = '6px';
+        const einwListeTitle = document.createElement('strong');
+        einwListeTitle.textContent = 'Bestehende Versionen:';
+        einwListe.appendChild(einwListeTitle);
+        const einwUl = document.createElement('ul');
+        einwUl.style.marginTop = '0.5rem';
+        einwUl.style.marginBottom = '0';
+        m.einwilligungen.forEach(e => {
+            const li = document.createElement('li');
+            li.textContent = `${e.version} (SHA-256: ${e.sha256.substring(0, 16)}...) gültig ab ${e.gueltig_ab}`;
+            einwUl.appendChild(li);
+        });
+        einwListe.appendChild(einwUl);
+        form.appendChild(einwListe);
+    }
 
     const einwVersionGroup = document.createElement('div');
     einwVersionGroup.className = 'form-group';
@@ -464,6 +506,10 @@ function renderMandantDetails(m) {
     einwTextInput.type = 'text';
     einwTextInput.id = 'einw-text';
     einwTextInput.maxLength = 1000;
+    // Enter abfangen (verhindert implizites Submit des Formulars)
+    einwTextInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') e.preventDefault();
+    });
     einwTextGroup.appendChild(einwTextInput);
     const einwSmall = document.createElement('small');
     einwSmall.textContent = 'Nach Speichern wird SHA-256 angezeigt';
@@ -504,6 +550,28 @@ function renderMandantDetails(m) {
     submitBtn.className = 'btn btn-primary';
     submitBtn.textContent = 'Speichern';
     actions.appendChild(submitBtn);
+
+    // Live-Validation für JSON-Felder (nach submitBtn-Definition)
+    function updateSubmitButton() {
+        const hasErrors = Object.keys(jsonErrors).length > 0;
+        submitBtn.disabled = hasErrors;
+        submitBtn.title = hasErrors ? 'Bitte JSON-Fehler beheben' : '';
+    }
+
+    jsonTextareas.forEach(({textarea, errorSpan, feldId}) => {
+        textarea.addEventListener('input', () => {
+            try {
+                JSON.parse(textarea.value);
+                errorSpan.className = 'field-error hidden';
+                delete jsonErrors[feldId];
+            } catch (err) {
+                errorSpan.textContent = 'Ungültiges JSON: ' + err.message;
+                errorSpan.className = 'field-error';
+                jsonErrors[feldId] = err.message;
+            }
+            updateSubmitButton();
+        });
+    });
 
     const cancelBtn = document.createElement('button');
     cancelBtn.type = 'button';
