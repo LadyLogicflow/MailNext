@@ -234,5 +234,159 @@ class TestEditor(MN):
         self.assertNotIn("Freigeben & Versenden", s[0]["zustand"]["knoepfe"])
 
 
+KI_SCHLUESSEL = "sk-test-" + "Q9w8E7r6" * 6
+
+
+def antwort(text="Verbesserter Text.", betreff="Besserer Betreff", stop="end_turn"):
+    from tests.test_ki import ok
+    return ok(text, betreff, stop)
+
+
+class TestKI(TestEditor):
+    """KI-Textverbesserung in der Oberfläche (der Dienst ist ersetzt): Knopf nur bei aktiv und Schlüssel, Hinweis, Vorschlag übernehmen ohne zu speichern, Fehlermeldungen, Schlüssel nie im DOM."""
+
+    def kiklar(self, aktiv=True, schluessel=True):
+        import ki
+        m = self.vorbereiten_abos()
+        if schluessel:
+            ki.schluessel_setzen(KI_SCHLUESSEL, "test")
+        if aktiv:
+            ki.aktiv_setzen(m["id"], True, "test")
+        return m
+
+    def editor(self, ops, **kw):
+        o = self.node(szenario="editor", mandant_name="HILO e. V.", ops=ops, schluessel=KI_SCHLUESSEL, **kw)
+        self.assertTrue(o["ok"], o)
+        return o
+
+    def knopf(self, aktiv, schluessel):
+        self.kiklar(aktiv, schluessel)
+        return self.editor([{"op": "neu"}])["schritte"][0]["zustand"]
+
+    def test_knopf_da_bei_aktiv_und_schluessel_mit_hinweis(self):
+        import ki
+        z = self.knopf(True, True)
+        self.assertTrue(z["ki_knopf"])
+        self.assertEqual(z["ki_hinweis"], ki.HINWEIS)
+
+    def test_kein_knopf_ohne_schluessel(self):
+        self.assertFalse(self.knopf(True, False)["ki_knopf"])
+
+    def test_kein_knopf_wenn_mandant_nicht_aktiv(self):
+        self.assertFalse(self.knopf(False, True)["ki_knopf"])
+
+    def test_kein_knopf_ohne_beides(self):
+        z = self.knopf(False, False)
+        self.assertFalse(z["ki_knopf"])
+        self.assertIsNone(z["ki_hinweis"])
+
+    def test_hinweis_und_vorschlag_uebernehmen_ohne_speichern(self):
+        import ki
+        self.kiklar()
+        from unittest import mock
+        with mock.patch("ki.requests.post", return_value=antwort("Das ist der bessere Text.", "Ein besserer Betreff")) as p:
+            o = self.editor([{"op": "neu"}, {"op": "fuellen", "betreff": "Alter Betreff", "text": "Das ist der alte text mit Fehlern."}, {"op": "ki_anweisung", "wert": "Bitte kürzer"},
+                             {"op": "ki_verbessern"}, {"op": "ki_uebernehmen"}])
+        s = o["schritte"]
+        self.assertEqual(s[3]["zustand"]["ki_hinweis"], ki.HINWEIS)                                   # Hinweis von Irony sichtbar
+        self.assertTrue(s[3]["zustand"]["ki_vorschau_sichtbar"])
+        self.assertEqual((s[3]["zustand"]["ki_vorschau_text"], s[3]["zustand"]["ki_vorschau_betreff"]), ("Das ist der bessere Text.", "Ein besserer Betreff"))
+        self.assertEqual((s[3]["zustand"]["betreff"], s[3]["zustand"]["text"]), ("Alter Betreff", "Das ist der alte text mit Fehlern."))      # bis hier unverändert
+        anfrage = [r for r in s[3]["requests"] if "text-verbessern" in r][0]
+        self.assertIn('"anweisung":"Bitte kürzer"', anfrage)
+        self.assertEqual(len(p.call_args[1]["json"]["messages"]), 1)
+        # Übernehmen setzt die Felder, speichert aber nichts
+        self.assertEqual((s[4]["zustand"]["betreff"], s[4]["zustand"]["text"]), ("Ein besserer Betreff", "Das ist der bessere Text."))
+        self.assertFalse(s[4]["zustand"]["ki_vorschau_sichtbar"])
+        self.assertEqual([r for r in s[4]["requests"] if not r.startswith("GET")], [])
+        self.assertEqual(self.entwuerfe(), [])
+        # genau der richtige Knopf wird beim Warten gesperrt und danach wieder hergestellt
+        print("KI_KNOEPFE", json.dumps({"vor": o.get("knoepfe_vor_ki"), "nach": o.get("knoepfe_nach_ki")}, ensure_ascii=False))
+        self.assertEqual(o["knoepfe_vor_ki"], o["knoepfe_nach_ki"], "ein anderer Knopf wurde umbenannt oder blieb gesperrt")
+
+    def test_verwerfen_aendert_nichts(self):
+        self.kiklar()
+        from unittest import mock
+        with mock.patch("ki.requests.post", return_value=antwort()):
+            s = self.editor([{"op": "neu"}, {"op": "fuellen", "betreff": "Behalten", "text": "Mein Text"}, {"op": "ki_verbessern"}, {"op": "ki_verwerfen"}])["schritte"]
+        self.assertFalse(s[3]["zustand"]["ki_vorschau_sichtbar"])
+        self.assertEqual((s[3]["zustand"]["betreff"], s[3]["zustand"]["text"]), ("Behalten", "Mein Text"))
+
+    def test_fehlermeldungen_vom_server_werden_gezeigt(self):
+        import requests
+        from unittest import mock
+        from tests.test_ki import Antwort
+        self.kiklar()
+        faelle = [(dict(side_effect=requests.Timeout()), "nicht rechtzeitig"), (dict(return_value=Antwort(500, {})), "Status 500"), (dict(return_value=Antwort(401, {})), "abgelehnt"),
+                  (dict(return_value=Antwort(200, {"content": [], "stop_reason": "end_turn"})), "keinen Text")]
+        for kw, erwartet in faelle:
+            with mock.patch("ki.requests.post", **kw):
+                s = self.editor([{"op": "neu"}, {"op": "fuellen", "betreff": "B", "text": "Etwas Text"}, {"op": "ki_verbessern"}])["schritte"]
+            print("KI_FEHLER", s[2]["zustand"]["ki_fehler"])
+            self.assertIn(erwartet, s[2]["zustand"]["ki_fehler"] or "", kw)
+            self.assertFalse(s[2]["zustand"]["ki_vorschau_sichtbar"])
+            self.assertNotIn(KI_SCHLUESSEL, json.dumps(s))
+
+    def test_text_zu_lang_und_leer_ohne_anfrage(self):
+        from unittest import mock
+        self.kiklar()
+        with mock.patch("ki.requests.post") as p:
+            s = self.editor([{"op": "neu"}, {"op": "fuellen", "betreff": "B", "text": "x" * 8001}, {"op": "ki_verbessern"}, {"op": "fuellen", "text": ""}, {"op": "ki_verbessern"}])["schritte"]
+        p.assert_not_called()
+        self.assertIn("1-8000", s[2]["zustand"]["ki_fehler"])
+        self.assertIn("1-8000", s[4]["zustand"]["ki_fehler"])
+
+    def test_limit_meldung(self):
+        from unittest import mock
+        self.kiklar()
+        with db.verbindung() as c:
+            for _ in range(20):
+                c.execute("INSERT INTO ki_aufruf(betreiber, zeit) VALUES (?,?)", (__import__("hmac").new(__import__("schluessel")._ableiten(b"mailnext-ki-v1"), b"catrin@bst-next.de", "sha256").hexdigest(), db.jetzt()))
+        with mock.patch("ki.requests.post") as p:
+            s = self.editor([{"op": "neu"}, {"op": "fuellen", "betreff": "B", "text": "Text"}, {"op": "ki_verbessern"}])["schritte"]
+        p.assert_not_called()
+        self.assertIn("Limit", s[2]["zustand"]["ki_fehler"])
+
+    def test_globale_einstellung_schluessel_nur_schreiben_und_nie_im_dom(self):
+        import einstellungen
+        import ki
+        self.vorbereiten_abos()
+        o = self.node(szenario="ki_global", mandant_name="HILO e. V.", schluessel_eingeben=KI_SCHLUESSEL, schluessel=KI_SCHLUESSEL)
+        self.assertTrue(o["ok"], o)
+        print("KI_GLOBAL", json.dumps({k: o.get(k) for k in ("feld", "speichern")}, ensure_ascii=False))
+        self.assertEqual((o["feld"]["typ"], o["feld"]["autocomplete"]), ("password", "off"))
+        self.assertIn("PUT /api/v1/betreiber/ki 200", o["speichern"]["requests"])
+        self.assertEqual(o["speichern"]["feld_danach"], "")
+        self.assertFalse(o["speichern"]["dom_hat_schluessel"])
+        self.assertEqual(einstellungen.lesen(ki.SCHLUESSEL_NAME), KI_SCHLUESSEL)
+        self.assertNotIn(KI_SCHLUESSEL, json.dumps(self.audit()))
+
+    def test_globale_einstellung_ungueltiger_schluessel(self):
+        self.vorbereiten_abos()
+        o = self.node(szenario="ki_global", mandant_name="HILO e. V.", schluessel_eingeben="kurz", schluessel="kurz")
+        self.assertTrue(o["ok"], o)
+        import ki
+        self.assertFalse(ki.schluessel_gesetzt())
+        self.assertTrue(o["speichern"]["fehler"], o["speichern"])
+        o = self.node(szenario="ki_global", mandant_name="HILO e. V.", schluessel_eingeben="", schluessel="x")
+        self.assertIn("Bitte Schlüssel eingeben", o["speichern"]["fehler"])
+
+    def test_mandanten_tab_schalter(self):
+        import ki
+        m = self.kiklar(aktiv=False)
+        o = self.node(szenario="ki_tab", mandant_name="HILO e. V.", aktiv=True)
+        self.assertTrue(o["ok"], o)
+        print("KI_TAB", json.dumps({k: o.get(k) for k in ("aktiv_vorher", "speichern")}, ensure_ascii=False))
+        self.assertIs(o["aktiv_vorher"], False)
+        self.assertIn("Anthropic", o["seite"])
+        self.assertTrue(any("PUT" in r and '"aktiv":true' in r for r in o["speichern"]["requests"]))
+        self.assertTrue(ki.aktiv(m["id"]))
+        self.assertNotIn(KI_SCHLUESSEL, o["seite"])
+
+
+for _n in [n for n in vars(TestEditor) if n.startswith("test_")]:                  # TestKI erbt nur die Hilfen von TestEditor, nicht dessen Tests
+    setattr(TestKI, _n, None)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1243,6 +1243,7 @@ async function renderNewsletterEditor(m, entwurfId) {
             verbessernBtn.type = 'button';
             verbessernBtn.className = 'btn btn-secondary';
             verbessernBtn.textContent = 'Text verbessern';
+            verbessernBtn.id = 'ki-verbessern-btn';
             verbessernBtn.style.marginTop = '0.75rem';
             verbessernBtn.addEventListener('click', () => textVerbessern(m));
             kiGroup.appendChild(verbessernBtn);
@@ -1679,7 +1680,7 @@ async function renderNewsletterEditor(m, entwurfId) {
                 return;
             }
 
-            const verbessernBtn = document.querySelector('.btn-secondary');
+            const verbessernBtn = document.getElementById('ki-verbessern-btn');
             verbessernBtn.disabled = true;
             verbessernBtn.textContent = 'Wird verbessert...';
 

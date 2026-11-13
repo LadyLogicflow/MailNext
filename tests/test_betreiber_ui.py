@@ -44,5 +44,30 @@ class UiTests(unittest.TestCase):
         self.assertEqual(self.c.get("/api/v1/betreiber/mandanten").status_code, 401)
 
 
+class TestOberflaecheStatisch(unittest.TestCase):
+    """Wächter über ui/betreiber/betreiber.js (ersetzt keine Prüfung im Browser, siehe tools/ui_pruefung)."""
+
+    def quelle(self):
+        pfad = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "ui", "betreiber", "betreiber.js")
+        with open(pfad, encoding="utf-8") as f:
+            return f.read()
+
+    def test_keine_unscharfe_knopfsuche(self):
+        """document.querySelector('.btn-secondary') greift den ersten beliebigen Knopf der Seite, nicht den gemeinten."""
+        q = self.quelle()
+        for muster in ("querySelector('.btn-secondary')", "querySelector('.btn-primary')", 'querySelector(".btn-secondary")', 'querySelector("button")', "querySelector('button')"):
+            self.assertNotIn(muster, q, muster)
+
+    def test_rollen_und_interessen_werden_als_wert_und_bezeichnung_benutzt(self):
+        q = self.quelle()
+        for muster in ("checkbox.value = rolle;", "checkbox.value = interesse;", "option.value = rolle;", "' ' + rolle)", "' ' + interesse)"):
+            self.assertNotIn(muster, q, muster)
+
+    def test_keine_inline_stile_als_attribut_und_kein_eval(self):
+        q = self.quelle()
+        for muster in ("setAttribute('style'", 'setAttribute("style"', "style=\"", "cssText", "eval(", "new Function("):
+            self.assertNotIn(muster, q, muster)
+
+
 if __name__ == "__main__":
     unittest.main()

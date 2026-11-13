@@ -88,6 +88,35 @@ async function main() {
         ergebnis_sichtbar: !doc.getElementById('import-ergebnis').classList.contains('hidden'), toast: toastText()};
     }
   }
+  if (arg.szenario === 'ki_global') {
+    await klick('Einstellungen', doc.getElementById('nav'));
+    const feld = doc.getElementById('ki-schluessel');
+    out.feld = {typ: feld ? feld.type : null, wert: feld ? feld.value : null, autocomplete: feld ? feld.autocomplete : null};
+    out.seite_vor = doc.getElementById('main').textContent.replace(/\s+/g, ' ').trim();
+    if (arg.schluessel_eingeben !== undefined) {
+      feld.value = arg.schluessel_eingeben;
+      const vor = requests.length;
+      doc.getElementById('ki-form').dispatchEvent(new win.Event('submit', {bubbles: true, cancelable: true}));
+      await sleep(900);
+      out.speichern = {requests: requests.slice(vor).map(r => `${r.m} ${r.p} ${r.s}`), fehler: sichtbarFehler(), feld_danach: doc.getElementById('ki-schluessel').value, toast: toastText(),
+        dom_hat_schluessel: doc.documentElement.outerHTML.includes(arg.schluessel_eingeben)};
+    }
+  }
+  if (arg.szenario === 'ki_tab') {
+    await klick('KI');
+    await sleep(500);
+    out.seite = doc.getElementById('main').textContent.replace(/\s+/g, ' ').trim();
+    const cb = doc.getElementById('ki-aktiv');
+    out.aktiv_vorher = cb ? cb.checked : null;
+    if (cb && arg.aktiv !== undefined) {
+      cb.checked = arg.aktiv;
+      const vor = requests.length;
+      const form = cb.closest('form');
+      form.dispatchEvent(new win.Event('submit', {bubbles: true, cancelable: true}));
+      await sleep(900);
+      out.speichern = {requests: requests.slice(vor).map(r => `${r.m} ${r.p} ${r.s} ${r.body ? JSON.stringify(r.body) : ''}`), toast: toastText(), aktiv_danach: doc.getElementById('ki-aktiv') ? doc.getElementById('ki-aktiv').checked : null};
+    }
+  }
   if (arg.szenario === 'editor') {
     await klick('Newsletter');
     await sleep(800);
@@ -95,6 +124,14 @@ async function main() {
     const sichtbar = () => ({vorschau: doc.getElementById('vorschau-anzahl') ? doc.getElementById('vorschau-anzahl').textContent : null,
       knoepfe: [...doc.querySelectorAll('#main button')].map(b => b.textContent.trim()), fehler: sichtbarFehler(), toast: toastText(),
       betreff: doc.getElementById('newsletter-betreff') ? doc.getElementById('newsletter-betreff').value : null,
+      text: doc.getElementById('newsletter-text') ? doc.getElementById('newsletter-text').value : null,
+      ki_knopf: [...doc.querySelectorAll('#main button')].some(b => b.textContent.trim() === 'Text verbessern'),
+      ki_hinweis: ([...doc.querySelectorAll('#main p')].find(e => e.textContent.includes('Anthropic')) || {textContent: null}).textContent,
+      ki_vorschau_sichtbar: doc.getElementById('ki-vorschau-container') ? !doc.getElementById('ki-vorschau-container').classList.contains('hidden') : null,
+      ki_vorschau_text: doc.getElementById('ki-vorschau-text') ? doc.getElementById('ki-vorschau-text').textContent : null,
+      ki_vorschau_betreff: doc.getElementById('ki-vorschau-betreff') && !doc.getElementById('ki-vorschau-betreff').classList.contains('hidden') ? doc.getElementById('ki-vorschau-betreff-text').textContent : null,
+      ki_fehler: doc.getElementById('ki-verbesserung-error') && !doc.getElementById('ki-verbesserung-error').classList.contains('hidden') ? doc.getElementById('ki-verbesserung-error').textContent : null,
+      dom_hat_schluessel: arg.schluessel ? doc.documentElement.outerHTML.includes(arg.schluessel) : null,
       listen_zeilen: [...doc.querySelectorAll('#main tbody tr')].map(tr => [...tr.querySelectorAll('td')].map(td => td.textContent.trim()))});
     for (const op of arg.ops) {
       const vor = requests.length; alerts.length = 0;
@@ -121,6 +158,14 @@ async function main() {
       if (op.op === 'testmail') { win.__prompt = op.an === undefined ? '' : op.an; await klick('Testmail senden'); await sleep(600); }
       if (op.op === 'freigeben') { win.__bestaetigen = op.bestaetigen !== false; await klick('Freigeben & Versenden'); await sleep(900); }
       if (op.op === 'liste') await klick('Zurück zur Liste');
+      if (op.op === 'ki_anweisung') doc.getElementById('ki-anweisung').value = op.wert;
+      if (op.op === 'ki_verbessern') {
+        out.knoepfe_vor_ki = [...doc.querySelectorAll('#main button')].map(b => b.textContent.trim());
+        await klick('Text verbessern'); await sleep(600);
+        out.knoepfe_nach_ki = [...doc.querySelectorAll('#main button')].map(b => b.textContent.trim());
+      }
+      if (op.op === 'ki_uebernehmen') await klick('Übernehmen');
+      if (op.op === 'ki_verwerfen') await klick('Verwerfen');
       out.schritte.push({op, requests: requests.slice(vor).map(r => `${r.m} ${r.p} ${r.s} ${r.body ? JSON.stringify(r.body) : ''}`), alerts: alerts.slice(), zustand: sichtbar()});
     }
   }
