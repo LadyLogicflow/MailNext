@@ -293,6 +293,8 @@ async function showMandantDetails(mandantId, tab = 'details') {
         state.currentTab = tab;
         if (tab === 'abonnenten') {
             renderAbonnenten(m);
+        } else if (tab === 'versand') {
+            renderVersand(m);
         } else {
             renderMandantDetails(m);
         }
@@ -314,16 +316,17 @@ function renderMandantDetails(m) {
     const tabsNav = document.createElement('div');
     tabsNav.style.marginBottom = '1.5rem';
     tabsNav.style.borderBottom = '1px solid var(--color-border)';
-    ['details', 'abonnenten'].forEach(tab => {
+    const tabs = [{id: 'details', label: 'Einstellungen'}, {id: 'versand', label: 'Versand'}, {id: 'abonnenten', label: 'Abonnenten'}];
+    tabs.forEach(tab => {
         const btn = document.createElement('button');
-        btn.textContent = tab === 'details' ? 'Einstellungen' : 'Abonnenten';
+        btn.textContent = tab.label;
         btn.style.padding = '0.5rem 1rem';
         btn.style.background = 'none';
         btn.style.border = 'none';
-        btn.style.borderBottom = state.currentTab === tab ? '2px solid var(--color-primary)' : '2px solid transparent';
+        btn.style.borderBottom = state.currentTab === tab.id ? '2px solid var(--color-primary)' : '2px solid transparent';
         btn.style.cursor = 'pointer';
-        btn.style.fontWeight = state.currentTab === tab ? '600' : 'normal';
-        btn.addEventListener('click', () => showMandantDetails(m.id, tab));
+        btn.style.fontWeight = state.currentTab === tab.id ? '600' : 'normal';
+        btn.addEventListener('click', () => showMandantDetails(m.id, tab.id));
         tabsNav.appendChild(btn);
     });
     card.appendChild(tabsNav);
@@ -672,6 +675,146 @@ function renderMandantDetails(m) {
     main.appendChild(card);
 }
 
+// Versand (Schritt 3)
+async function renderVersand(m) {
+    const main = document.getElementById('main');
+    const card = document.createElement('div');
+    card.className = 'card';
+
+    const title = document.createElement('h2');
+    title.textContent = m.name;
+    card.appendChild(title);
+
+    // Tabs
+    const tabsNav = document.createElement('div');
+    tabsNav.style.marginBottom = '1.5rem';
+    tabsNav.style.borderBottom = '1px solid var(--color-border)';
+    const tabs = [{id: 'details', label: 'Einstellungen'}, {id: 'versand', label: 'Versand'}, {id: 'abonnenten', label: 'Abonnenten'}];
+    tabs.forEach(tab => {
+        const btn = document.createElement('button');
+        btn.textContent = tab.label;
+        btn.style.padding = '0.5rem 1rem';
+        btn.style.background = 'none';
+        btn.style.border = 'none';
+        btn.style.borderBottom = state.currentTab === tab.id ? '2px solid var(--color-primary)' : '2px solid transparent';
+        btn.style.cursor = 'pointer';
+        btn.style.fontWeight = state.currentTab === tab.id ? '600' : 'normal';
+        btn.addEventListener('click', () => showMandantDetails(m.id, tab.id));
+        tabsNav.appendChild(btn);
+    });
+    card.appendChild(tabsNav);
+
+    const form = document.createElement('form');
+    const errorDiv = document.createElement('div');
+    errorDiv.className = 'error hidden';
+    errorDiv.id = 'versand-error';
+    form.appendChild(errorDiv);
+
+    // Modus
+    const modusGroup = document.createElement('div');
+    modusGroup.className = 'form-group';
+    const modusLabel = document.createElement('label');
+    modusLabel.textContent = 'Versandmodus';
+    modusGroup.appendChild(modusLabel);
+    ['aus', 'datei', 'smtp'].forEach(mode => {
+        const lbl = document.createElement('label');
+        lbl.style.display = 'block';
+        lbl.style.marginBottom = '0.5rem';
+        const radio = document.createElement('input');
+        radio.type = 'radio';
+        radio.name = 'versandmodus';
+        radio.value = mode;
+        radio.checked = m.versand.versandmodus === mode;
+        radio.addEventListener('change', () => {
+            document.getElementById('smtp-fields').style.display = mode === 'smtp' ? 'block' : 'none';
+        });
+        lbl.appendChild(radio);
+        lbl.appendChild(document.createTextNode(' ' + mode.toUpperCase()));
+        modusGroup.appendChild(lbl);
+    });
+    form.appendChild(modusGroup);
+
+    // SMTP-Felder
+    const smtpDiv = document.createElement('div');
+    smtpDiv.id = 'smtp-fields';
+    smtpDiv.style.display = m.versand.versandmodus === 'smtp' ? 'block' : 'none';
+    [
+        {id: 'smtp_host', label: 'Host', type: 'text', placeholder: 'smtp.example.com'},
+        {id: 'smtp_port', label: 'Port', type: 'number', placeholder: '587'},
+        {id: 'smtp_benutzer', label: 'Benutzer', type: 'text'},
+        {id: 'smtp_passwort', label: 'Passwort', type: 'password'},
+    ].forEach(f => {
+        const g = document.createElement('div');
+        g.className = 'form-group';
+        const l = document.createElement('label');
+        l.textContent = f.label + (m.versand.gesetzt[f.id] ? ' (gesetzt)' : '');
+        g.appendChild(l);
+        const i = document.createElement('input');
+        i.type = f.type;
+        i.id = f.id;
+        if (f.placeholder) i.placeholder = f.placeholder;
+        g.appendChild(i);
+        smtpDiv.appendChild(g);
+    });
+
+    const verschlGroup = document.createElement('div');
+    verschlGroup.className = 'form-group';
+    const verschlLabel = document.createElement('label');
+    verschlLabel.textContent = 'Verschlüsselung';
+    verschlGroup.appendChild(verschlLabel);
+    const verschlSelect = document.createElement('select');
+    verschlSelect.id = 'smtp_verschluesselung';
+    ['ssl', 'starttls'].forEach(v => {
+        const opt = document.createElement('option');
+        opt.value = v;
+        opt.textContent = v.toUpperCase();
+        verschlSelect.appendChild(opt);
+    });
+    verschlGroup.appendChild(verschlSelect);
+    smtpDiv.appendChild(verschlGroup);
+    form.appendChild(smtpDiv);
+
+    // Submit
+    const actions = document.createElement('div');
+    actions.className = 'form-actions';
+    const submitBtn = document.createElement('button');
+    submitBtn.type = 'submit';
+    submitBtn.className = 'btn btn-primary';
+    submitBtn.textContent = 'Speichern';
+    actions.appendChild(submitBtn);
+    form.appendChild(actions);
+
+    form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        errorDiv.className = 'error hidden';
+        const modus = form.querySelector('input[name="versandmodus"]:checked').value;
+        const body = {versandmodus: modus};
+        if (modus === 'smtp') {
+            ['smtp_host', 'smtp_port', 'smtp_benutzer', 'smtp_passwort', 'smtp_verschluesselung'].forEach(f => {
+                const val = document.getElementById(f).value.trim();
+                if (val) body[f] = f === 'smtp_port' ? parseInt(val) : val;
+            });
+        }
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Wird gespeichert...';
+        try {
+            await apiCall(`/mandanten/${m.id}/versand`, {method: 'PUT', body: JSON.stringify(body)});
+            showToast('Versand-Einstellungen gespeichert', 'success');
+            await showMandantDetails(m.id, 'versand');
+        } catch (err) {
+            errorDiv.textContent = err.message;
+            errorDiv.className = 'error';
+        } finally {
+            submitBtn.disabled = false;
+            submitBtn.textContent = 'Speichern';
+        }
+    });
+
+    card.appendChild(form);
+    main.innerHTML = '';
+    main.appendChild(card);
+}
+
 // Abonnenten (Schritt 3)
 async function renderAbonnenten(m) {
     const main = document.getElementById('main');
@@ -682,20 +825,21 @@ async function renderAbonnenten(m) {
     title.textContent = m.name;
     card.appendChild(title);
 
-    // Tabs (wie in renderMandantDetails)
+    // Tabs
     const tabsNav = document.createElement('div');
     tabsNav.style.marginBottom = '1.5rem';
     tabsNav.style.borderBottom = '1px solid var(--color-border)';
-    ['details', 'abonnenten'].forEach(tab => {
+    const tabs = [{id: 'details', label: 'Einstellungen'}, {id: 'versand', label: 'Versand'}, {id: 'abonnenten', label: 'Abonnenten'}];
+    tabs.forEach(tab => {
         const btn = document.createElement('button');
-        btn.textContent = tab === 'details' ? 'Einstellungen' : 'Abonnenten';
+        btn.textContent = tab.label;
         btn.style.padding = '0.5rem 1rem';
         btn.style.background = 'none';
         btn.style.border = 'none';
-        btn.style.borderBottom = state.currentTab === tab ? '2px solid var(--color-primary)' : '2px solid transparent';
+        btn.style.borderBottom = state.currentTab === tab.id ? '2px solid var(--color-primary)' : '2px solid transparent';
         btn.style.cursor = 'pointer';
-        btn.style.fontWeight = state.currentTab === tab ? '600' : 'normal';
-        btn.addEventListener('click', () => showMandantDetails(m.id, tab));
+        btn.style.fontWeight = state.currentTab === tab.id ? '600' : 'normal';
+        btn.addEventListener('click', () => showMandantDetails(m.id, tab.id));
         tabsNav.appendChild(btn);
     });
     card.appendChild(tabsNav);
