@@ -293,6 +293,8 @@ async function showMandantDetails(mandantId, tab = 'details') {
             renderAbonnenten(m);
         } else if (tab === 'versand') {
             renderVersand(m);
+        } else if (tab === 'newsletter') {
+            renderNewsletter(m);
         } else if (tab === 'import') {
             renderImport(m);
         } else {
@@ -307,7 +309,7 @@ function renderTabs(m, card) {
     const tabsNav = document.createElement('div');
     tabsNav.style.marginBottom = '1.5rem';
     tabsNav.style.borderBottom = '1px solid var(--color-border)';
-    const tabs = [{id: 'details', label: 'Einstellungen'}, {id: 'versand', label: 'Versand'}, {id: 'abonnenten', label: 'Abonnenten'}, {id: 'import', label: 'Import'}];
+    const tabs = [{id: 'details', label: 'Einstellungen'}, {id: 'versand', label: 'Versand'}, {id: 'newsletter', label: 'Newsletter'}, {id: 'abonnenten', label: 'Abonnenten'}, {id: 'import', label: 'Import'}];
     tabs.forEach(tab => {
         const btn = document.createElement('button');
         btn.textContent = tab.label;
@@ -807,6 +809,203 @@ async function renderVersand(m) {
 }
 
 // Abonnenten (Schritt 3)
+// Newsletter
+async function renderNewsletter(m) {
+    const main = document.getElementById('main');
+    const card = document.createElement('div');
+    card.className = 'card';
+
+    const title = document.createElement('h2');
+    title.textContent = m.name;
+    card.appendChild(title);
+
+    renderTabs(m, card);
+
+    const subtitle = document.createElement('h3');
+    subtitle.textContent = 'Newsletter-Entwurf';
+    subtitle.style.marginBottom = '1rem';
+    card.appendChild(subtitle);
+
+    const form = document.createElement('form');
+    form.id = 'newsletter-form';
+
+    // Zielgruppe
+    const zielgruppeTitle = document.createElement('h4');
+    zielgruppeTitle.textContent = 'Zielgruppe';
+    zielgruppeTitle.style.marginBottom = '1rem';
+    form.appendChild(zielgruppeTitle);
+
+    // Rollen
+    if (m.design && m.design.rollen && m.design.rollen.length > 0) {
+        const rollenGroup = document.createElement('div');
+        rollenGroup.className = 'form-group';
+        const rollenLabel = document.createElement('label');
+        rollenLabel.textContent = 'Rollen';
+        rollenGroup.appendChild(rollenLabel);
+        m.design.rollen.forEach(rolle => {
+            const label = document.createElement('label');
+            label.style.display = 'block';
+            label.style.marginTop = '0.25rem';
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.className = 'segment-rolle';
+            checkbox.value = rolle;
+            checkbox.addEventListener('change', updateEmpfaengerzahl);
+            label.appendChild(checkbox);
+            label.appendChild(document.createTextNode(' ' + rolle));
+            rollenGroup.appendChild(label);
+        });
+        form.appendChild(rollenGroup);
+    }
+
+    // Interessen
+    if (m.design && m.design.interessen && m.design.interessen.length > 0) {
+        const interessenGroup = document.createElement('div');
+        interessenGroup.className = 'form-group';
+        const interessenLabel = document.createElement('label');
+        interessenLabel.textContent = 'Interessen';
+        interessenGroup.appendChild(interessenLabel);
+        m.design.interessen.forEach(interesse => {
+            const label = document.createElement('label');
+            label.style.display = 'block';
+            label.style.marginTop = '0.25rem';
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.className = 'segment-interesse';
+            checkbox.value = interesse;
+            checkbox.addEventListener('change', updateEmpfaengerzahl);
+            label.appendChild(checkbox);
+            label.appendChild(document.createTextNode(' ' + interesse));
+            interessenGroup.appendChild(label);
+        });
+        form.appendChild(interessenGroup);
+    }
+
+    // Tags laden
+    const tagsGroup = document.createElement('div');
+    tagsGroup.className = 'form-group';
+    const tagsLabel = document.createElement('label');
+    tagsLabel.textContent = 'Tags';
+    tagsGroup.appendChild(tagsLabel);
+    const tagsLoading = document.createElement('div');
+    tagsLoading.textContent = 'Lade Tags...';
+    tagsLoading.style.color = '#6b7280';
+    tagsLoading.style.fontSize = '0.875rem';
+    tagsGroup.appendChild(tagsLoading);
+    form.appendChild(tagsGroup);
+
+    try {
+        const tagsData = await apiCall(`/mandanten/${m.id}/abonnenten/tags`);
+        tagsLoading.remove();
+        if (tagsData.tags && tagsData.tags.length > 0) {
+            tagsData.tags.forEach(tagObj => {
+                const label = document.createElement('label');
+                label.style.display = 'block';
+                label.style.marginTop = '0.25rem';
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.className = 'segment-tag';
+                checkbox.value = tagObj.tag;
+                checkbox.addEventListener('change', updateEmpfaengerzahl);
+                label.appendChild(checkbox);
+                label.appendChild(document.createTextNode(' ' + tagObj.tag + ' (' + tagObj.anzahl + ')'));
+                tagsGroup.appendChild(label);
+            });
+        } else {
+            const noTags = document.createElement('div');
+            noTags.textContent = 'Keine Tags vorhanden';
+            noTags.style.color = '#6b7280';
+            noTags.style.fontSize = '0.875rem';
+            tagsGroup.appendChild(noTags);
+        }
+    } catch (err) {
+        tagsLoading.textContent = 'Fehler beim Laden: ' + err.message;
+        tagsLoading.style.color = 'var(--color-error)';
+    }
+
+    // Tags-Modus
+    const tagsModusGroup = document.createElement('div');
+    tagsModusGroup.className = 'form-group';
+    const tagsModusLabel = document.createElement('label');
+    tagsModusLabel.textContent = 'Tags-Modus (bei mehreren Tags)';
+    tagsModusGroup.appendChild(tagsModusLabel);
+    ['oder', 'und'].forEach(mode => {
+        const label = document.createElement('label');
+        label.style.display = 'inline-block';
+        label.style.marginRight = '1rem';
+        const radio = document.createElement('input');
+        radio.type = 'radio';
+        radio.name = 'tags_modus';
+        radio.value = mode;
+        radio.checked = mode === 'oder';
+        radio.addEventListener('change', updateEmpfaengerzahl);
+        label.appendChild(radio);
+        label.appendChild(document.createTextNode(' ' + mode.toUpperCase()));
+        tagsModusGroup.appendChild(label);
+    });
+    const tagsModusHint = document.createElement('small');
+    tagsModusHint.textContent = 'ODER: mind. 1 Tag, UND: alle Tags. Zwischen Rolle/Interessen/Tags gilt immer UND.';
+    tagsModusHint.style.display = 'block';
+    tagsModusHint.style.marginTop = '0.25rem';
+    tagsModusHint.style.color = '#6b7280';
+    tagsModusGroup.appendChild(tagsModusHint);
+    form.appendChild(tagsModusGroup);
+
+    // Empfängerzahl
+    const empfaengerDiv = document.createElement('div');
+    empfaengerDiv.id = 'newsletter-empfaenger';
+    empfaengerDiv.style.marginTop = '1.5rem';
+    empfaengerDiv.style.padding = '1rem';
+    empfaengerDiv.style.background = '#f0f9ff';
+    empfaengerDiv.style.borderRadius = '6px';
+    const empfaengerText = document.createElement('strong');
+    empfaengerText.id = 'empfaenger-anzahl';
+    empfaengerText.textContent = 'Empfänger: 0';
+    empfaengerDiv.appendChild(empfaengerText);
+    form.appendChild(empfaengerDiv);
+
+    const errorDiv = document.createElement('div');
+    errorDiv.className = 'error hidden';
+    errorDiv.id = 'newsletter-error';
+    form.appendChild(errorDiv);
+
+    card.appendChild(form);
+    main.innerHTML = '';
+    main.appendChild(card);
+
+    // Empfängerzahl initial laden
+    updateEmpfaengerzahl();
+
+    async function updateEmpfaengerzahl() {
+        const errorDiv = document.getElementById('newsletter-error');
+        errorDiv.classList.add('hidden');
+
+        const rollen = Array.from(document.querySelectorAll('.segment-rolle:checked')).map(cb => cb.value);
+        const interessen = Array.from(document.querySelectorAll('.segment-interesse:checked')).map(cb => cb.value);
+        const tags = Array.from(document.querySelectorAll('.segment-tag:checked')).map(cb => cb.value);
+        const tags_modus = document.querySelector('input[name="tags_modus"]:checked')?.value || 'oder';
+
+        const segment = {};
+        if (rollen.length > 0) segment.rollen = rollen;
+        if (interessen.length > 0) segment.interessen = interessen;
+        if (tags.length > 0) {
+            segment.tags = tags;
+            segment.tags_modus = tags_modus;
+        }
+
+        try {
+            const result = await apiCall(`/mandanten/${m.id}/abonnenten/vorschau`, {
+                method: 'POST',
+                body: JSON.stringify({segment})
+            });
+            document.getElementById('empfaenger-anzahl').textContent = `Empfänger: ${result.anzahl}`;
+        } catch (err) {
+            errorDiv.textContent = err.message;
+            errorDiv.classList.remove('hidden');
+        }
+    }
+}
+
 async function renderAbonnenten(m) {
     const main = document.getElementById('main');
     const card = document.createElement('div');
