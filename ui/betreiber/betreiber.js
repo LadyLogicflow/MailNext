@@ -1275,7 +1275,7 @@ async function renderNewsletterEditor(m, entwurfId) {
         }
 
         async function sendTestmail(mandant, eid) {
-            const an = prompt('Testmail an (leer = Testliste):');
+            const an = prompt('Testmail an (leer = an Ihre eigene Adresse; sonst nur Adressen aus der Testliste):');
             if (an === null) return;
 
             try {

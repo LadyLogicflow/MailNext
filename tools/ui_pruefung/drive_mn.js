@@ -5,6 +5,7 @@ const BASE = `http://127.0.0.1:${arg.port}`;
 const jar = {bst_session: 'tok'};
 const requests = [];
 const toasts = [];
+const alerts = [];
 function cookieHeader() { return Object.entries(jar).map(([k, v]) => `${k}=${v}`).join('; '); }
 async function shimFetch(url, opts = {}) {
   const u = new URL(url, BASE + '/');
@@ -21,7 +22,7 @@ async function main() {
   const fehler = [];
   vc.on('jsdomError', (e) => fehler.push('jsdomError: ' + (e.detail && e.detail.message || e.message)));
   const dom = await JSDOM.fromURL(BASE + '/betreiber/', {runScripts: 'dangerously', resources: 'usable', pretendToBeVisual: true, virtualConsole: vc,
-    beforeParse(win) { win.fetch = (u, o) => shimFetch(u, o); win.confirm = () => true; win.alert = () => {}; }});
+    beforeParse(win) { win.fetch = (u, o) => shimFetch(u, o); win.__bestaetigen = true; win.__prompt = ''; win.confirm = (t) => { alerts.push('confirm: ' + t); return win.__bestaetigen; }; win.prompt = (t) => { alerts.push('prompt: ' + t); return win.__prompt; }; win.alert = (t) => { alerts.push('alert: ' + t); }; }});
   const win = dom.window; const doc = win.document;
   const klick = async (text, wo) => {
     const b = [...(wo || doc).querySelectorAll('button')].find(x => x.textContent.trim() === text);
@@ -42,20 +43,20 @@ async function main() {
   }
   if (arg.szenario === 'newsletter') {
     await klick('Newsletter');
+    await klick('Neuer Entwurf');
     await sleep(800);
     const cbs = (k) => [...doc.querySelectorAll('.segment-' + k)].map(c => ({wert: c.value, label: c.parentElement.textContent.trim()}));
     out.rollen = cbs('rolle'); out.interessen = cbs('interesse'); out.tags = cbs('tag');
-    out.empfaenger_start = doc.getElementById('empfaenger-anzahl').textContent;
+    out.empfaenger_start = doc.getElementById('vorschau-anzahl').textContent;
     out.fehler_start = sichtbarFehler();
     out.schritte = [];
     for (const schritt of arg.schritte || []) {
       for (const cls of ['rolle', 'interesse', 'tag']) for (const cb of doc.querySelectorAll('.segment-' + cls)) cb.checked = (schritt[cls] || []).includes(cb.value) || (schritt[cls + '_label'] || []).some(l => cb.parentElement.textContent.includes(l));
       for (const r of doc.querySelectorAll('input[name="tags_modus"]')) r.checked = r.value === (schritt.modus || 'oder');
       const vor = requests.length;
-      const geaendert = [...doc.querySelectorAll('.segment-rolle,.segment-interesse,.segment-tag,input[name="tags_modus"]')].find(c => c.checked) || doc.querySelector('input[name="tags_modus"]');
-      geaendert.dispatchEvent(new win.Event('change', {bubbles: true}));
+      await klick('Empfänger aktualisieren');
       await sleep(700);
-      out.schritte.push({schritt, empfaenger: doc.getElementById('empfaenger-anzahl').textContent, fehler: sichtbarFehler(), requests: requests.slice(vor).map(r => `${r.m} ${r.p} ${r.s} ${r.body ? JSON.stringify(r.body) : ''}`)});
+      out.schritte.push({schritt, empfaenger: doc.getElementById('vorschau-anzahl').textContent, fehler: sichtbarFehler(), requests: requests.slice(vor).map(r => `${r.m} ${r.p} ${r.s} ${r.body ? JSON.stringify(r.body) : ''}`)});
     }
   }
   if (arg.szenario === 'import') {
@@ -85,6 +86,42 @@ async function main() {
       await klick('Importieren', doc);
       out.import = {requests: requests.slice(v2).map(r => `${r.m} ${r.p} ${r.s} ${r.body ? JSON.stringify(r.body) : ''}`), fehler: sichtbarFehler(), ergebnis_text: doc.getElementById('import-ergebnis').textContent.replace(/\s+/g, ' ').trim(),
         ergebnis_sichtbar: !doc.getElementById('import-ergebnis').classList.contains('hidden'), toast: toastText()};
+    }
+  }
+  if (arg.szenario === 'editor') {
+    await klick('Newsletter');
+    await sleep(800);
+    out.schritte = [];
+    const sichtbar = () => ({vorschau: doc.getElementById('vorschau-anzahl') ? doc.getElementById('vorschau-anzahl').textContent : null,
+      knoepfe: [...doc.querySelectorAll('#main button')].map(b => b.textContent.trim()), fehler: sichtbarFehler(), toast: toastText(),
+      betreff: doc.getElementById('newsletter-betreff') ? doc.getElementById('newsletter-betreff').value : null,
+      listen_zeilen: [...doc.querySelectorAll('#main tbody tr')].map(tr => [...tr.querySelectorAll('td')].map(td => td.textContent.trim()))});
+    for (const op of arg.ops) {
+      const vor = requests.length; alerts.length = 0;
+      if (op.op === 'neu') await klick('Neuer Entwurf');
+      if (op.op === 'oeffnen') {
+        const zeile = [...doc.querySelectorAll('#main tbody tr')].find(tr => tr.textContent.includes(op.betreff));
+        if (!zeile) throw new Error('Entwurf nicht in der Liste: ' + op.betreff);
+        zeile.click(); await sleep(900);
+      }
+      if (op.op === 'fuellen') {
+        if (op.betreff !== undefined) doc.getElementById('newsletter-betreff').value = op.betreff;
+        if (op.text !== undefined) doc.getElementById('newsletter-text').value = op.text;
+        if (op.ziel) for (const r of doc.querySelectorAll('input[name="ziel"]')) r.checked = r.value === op.ziel;
+        if (op.tags) for (const cb of doc.querySelectorAll('.segment-tag')) cb.checked = op.tags.includes(cb.value);
+        if (op.modus) for (const r of doc.querySelectorAll('input[name="tags_modus"]')) r.checked = r.value === op.modus;
+        if (op.rollen) for (const cb of doc.querySelectorAll('.segment-rolle')) cb.checked = op.rollen.includes(cb.value);
+        if (op.interessen) for (const cb of doc.querySelectorAll('.segment-interesse')) cb.checked = op.interessen.includes(cb.value);
+        if (op.aktualisieren) { await klick('Empfänger aktualisieren'); }
+      }
+      if (op.op === 'speichern') {
+        doc.getElementById('newsletter-form').dispatchEvent(new win.Event('submit', {bubbles: true, cancelable: true}));
+        await sleep(1200);
+      }
+      if (op.op === 'testmail') { win.__prompt = op.an === undefined ? '' : op.an; await klick('Testmail senden'); await sleep(600); }
+      if (op.op === 'freigeben') { win.__bestaetigen = op.bestaetigen !== false; await klick('Freigeben & Versenden'); await sleep(900); }
+      if (op.op === 'liste') await klick('Zurück zur Liste');
+      out.schritte.push({op, requests: requests.slice(vor).map(r => `${r.m} ${r.p} ${r.s} ${r.body ? JSON.stringify(r.body) : ''}`), alerts: alerts.slice(), zustand: sichtbar()});
     }
   }
   out.toast = toastText();
