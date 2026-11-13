@@ -8,6 +8,7 @@ import config
 import db
 import einstellungen
 import betreiber
+import betreiber_ui
 import public
 
 
@@ -43,6 +44,7 @@ def create_app(db_pfad: str | None = None) -> Flask:
     app.config["MAX_CONTENT_LENGTH"] = 20000
     app.register_blueprint(public.bp)
     app.register_blueprint(betreiber.bp)
+    app.register_blueprint(betreiber_ui.bp)
 
     @app.errorhandler(einstellungen.HauptschluesselFehlt)
     def _nicht_bereit(_):
