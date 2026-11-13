@@ -293,6 +293,8 @@ async function showMandantDetails(mandantId, tab = 'details') {
             renderAbonnenten(m);
         } else if (tab === 'versand') {
             renderVersand(m);
+        } else if (tab === 'import') {
+            renderImport(m);
         } else {
             renderMandantDetails(m);
         }
@@ -305,7 +307,7 @@ function renderTabs(m, card) {
     const tabsNav = document.createElement('div');
     tabsNav.style.marginBottom = '1.5rem';
     tabsNav.style.borderBottom = '1px solid var(--color-border)';
-    const tabs = [{id: 'details', label: 'Einstellungen'}, {id: 'versand', label: 'Versand'}, {id: 'abonnenten', label: 'Abonnenten'}];
+    const tabs = [{id: 'details', label: 'Einstellungen'}, {id: 'versand', label: 'Versand'}, {id: 'abonnenten', label: 'Abonnenten'}, {id: 'import', label: 'Import'}];
     tabs.forEach(tab => {
         const btn = document.createElement('button');
         btn.textContent = tab.label;
@@ -909,6 +911,410 @@ async function renderAbonnenten(m) {
     } catch (err) {
         loadingDiv.textContent = 'Fehler: ' + err.message;
         loadingDiv.style.color = 'var(--color-error)';
+    }
+}
+
+// Import
+function renderImport(m) {
+    const main = document.getElementById('main');
+    const card = document.createElement('div');
+    card.className = 'card';
+
+    const title = document.createElement('h2');
+    title.textContent = m.name;
+    card.appendChild(title);
+
+    renderTabs(m, card);
+
+    const subtitle = document.createElement('h3');
+    subtitle.textContent = 'Abonnenten importieren';
+    subtitle.style.marginBottom = '1rem';
+    card.appendChild(subtitle);
+
+    const form = document.createElement('form');
+    form.id = 'import-form';
+
+    // Datei
+    const fileGroup = document.createElement('div');
+    fileGroup.className = 'form-group';
+    const fileLabel = document.createElement('label');
+    fileLabel.textContent = 'CSV-Datei *';
+    fileGroup.appendChild(fileLabel);
+    const fileInput = document.createElement('input');
+    fileInput.type = 'file';
+    fileInput.id = 'import-file';
+    fileInput.accept = '.csv,text/csv';
+    fileInput.required = true;
+    fileGroup.appendChild(fileInput);
+    const fileHint = document.createElement('small');
+    fileHint.textContent = 'Maximal 3 MB, 20.000 Zeilen. Spalten: E-Mail, Status';
+    fileHint.style.display = 'block';
+    fileHint.style.marginTop = '0.25rem';
+    fileHint.style.color = '#6b7280';
+    fileGroup.appendChild(fileHint);
+    form.appendChild(fileGroup);
+
+    // Quelle
+    const quelleGroup = document.createElement('div');
+    quelleGroup.className = 'form-group';
+    const quelleLabel = document.createElement('label');
+    quelleLabel.textContent = 'Quelle *';
+    quelleGroup.appendChild(quelleLabel);
+    const quelleInput = document.createElement('input');
+    quelleInput.type = 'text';
+    quelleInput.id = 'import-quelle';
+    quelleInput.placeholder = 'z.B. Mailchimp-Export 13.11.2026';
+    quelleInput.maxLength = 100;
+    quelleInput.required = true;
+    quelleGroup.appendChild(quelleInput);
+    const quelleError = document.createElement('div');
+    quelleError.className = 'field-error hidden';
+    quelleError.id = 'quelle-error';
+    quelleGroup.appendChild(quelleError);
+    form.appendChild(quelleGroup);
+
+    // Rolle (optional)
+    if (m.design && m.design.rollen && m.design.rollen.length > 0) {
+        const rolleGroup = document.createElement('div');
+        rolleGroup.className = 'form-group';
+        const rolleLabel = document.createElement('label');
+        rolleLabel.textContent = 'Rolle (optional, gilt für alle Zeilen)';
+        rolleGroup.appendChild(rolleLabel);
+        const rolleSelect = document.createElement('select');
+        rolleSelect.id = 'import-rolle';
+        const emptyOption = document.createElement('option');
+        emptyOption.value = '';
+        emptyOption.textContent = '(keine)';
+        rolleSelect.appendChild(emptyOption);
+        m.design.rollen.forEach(rolle => {
+            const option = document.createElement('option');
+            option.value = rolle;
+            option.textContent = rolle;
+            rolleSelect.appendChild(option);
+        });
+        rolleGroup.appendChild(rolleSelect);
+        form.appendChild(rolleGroup);
+    }
+
+    // Interessen (optional, Mehrfach)
+    if (m.design && m.design.interessen && m.design.interessen.length > 0) {
+        const interessenGroup = document.createElement('div');
+        interessenGroup.className = 'form-group';
+        const interessenLabel = document.createElement('label');
+        interessenLabel.textContent = 'Interessen (optional, gelten für alle Zeilen)';
+        interessenGroup.appendChild(interessenLabel);
+        m.design.interessen.forEach(interesse => {
+            const label = document.createElement('label');
+            label.style.display = 'block';
+            label.style.marginTop = '0.25rem';
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.className = 'import-interesse';
+            checkbox.value = interesse;
+            label.appendChild(checkbox);
+            label.appendChild(document.createTextNode(' ' + interesse));
+            interessenGroup.appendChild(label);
+        });
+        form.appendChild(interessenGroup);
+    }
+
+    // Buttons
+    const buttonGroup = document.createElement('div');
+    buttonGroup.style.display = 'flex';
+    buttonGroup.style.gap = '0.5rem';
+    buttonGroup.style.marginTop = '1rem';
+
+    const pruefenBtn = document.createElement('button');
+    pruefenBtn.type = 'button';
+    pruefenBtn.className = 'btn btn-secondary';
+    pruefenBtn.textContent = 'Prüfen';
+    pruefenBtn.id = 'btn-pruefen';
+    pruefenBtn.disabled = true;
+    buttonGroup.appendChild(pruefenBtn);
+
+    const importierenBtn = document.createElement('button');
+    importierenBtn.type = 'button';
+    importierenBtn.className = 'btn btn-primary';
+    importierenBtn.textContent = 'Importieren';
+    importierenBtn.id = 'btn-importieren';
+    importierenBtn.disabled = true;
+    buttonGroup.appendChild(importierenBtn);
+
+    form.appendChild(buttonGroup);
+
+    const errorDiv = document.createElement('div');
+    errorDiv.className = 'error hidden';
+    errorDiv.id = 'import-error';
+    form.appendChild(errorDiv);
+
+    card.appendChild(form);
+
+    // Vorschau
+    const vorschauDiv = document.createElement('div');
+    vorschauDiv.id = 'import-vorschau';
+    vorschauDiv.className = 'hidden';
+    vorschauDiv.style.marginTop = '1.5rem';
+    card.appendChild(vorschauDiv);
+
+    // Einwilligung
+    const einwilligungDiv = document.createElement('div');
+    einwilligungDiv.id = 'import-einwilligung';
+    einwilligungDiv.className = 'hidden';
+    einwilligungDiv.style.marginTop = '1.5rem';
+    const einwilligungLabel = document.createElement('label');
+    const einwilligungCheckbox = document.createElement('input');
+    einwilligungCheckbox.type = 'checkbox';
+    einwilligungCheckbox.id = 'import-einwilligung-check';
+    einwilligungLabel.appendChild(einwilligungCheckbox);
+    einwilligungLabel.appendChild(document.createTextNode(' Einwilligung liegt vor'));
+    einwilligungDiv.appendChild(einwilligungLabel);
+    card.appendChild(einwilligungDiv);
+
+    // Ergebnis
+    const ergebnisDiv = document.createElement('div');
+    ergebnisDiv.id = 'import-ergebnis';
+    ergebnisDiv.className = 'hidden';
+    ergebnisDiv.style.marginTop = '1.5rem';
+    card.appendChild(ergebnisDiv);
+
+    main.innerHTML = '';
+    main.appendChild(card);
+
+    // Event-Listener
+    fileInput.addEventListener('change', validateImportForm);
+    quelleInput.addEventListener('input', () => {
+        validateQuelle();
+        validateImportForm();
+    });
+    einwilligungCheckbox.addEventListener('change', validateImportForm);
+
+    pruefenBtn.addEventListener('click', () => importPruefen(m));
+    importierenBtn.addEventListener('click', () => importDurchfuehren(m));
+
+    function validateQuelle() {
+        const value = quelleInput.value.trim();
+        const error = document.getElementById('quelle-error');
+        if (value && (value.length < 1 || value.length > 100)) {
+            error.textContent = 'Quelle muss 1-100 Zeichen lang sein';
+            error.classList.remove('hidden');
+            return false;
+        }
+        error.classList.add('hidden');
+        return true;
+    }
+
+    function validateImportForm() {
+        const file = fileInput.files[0];
+        const quelle = quelleInput.value.trim();
+        const einwilligung = einwilligungCheckbox.checked;
+        const vorschauSichtbar = !vorschauDiv.classList.contains('hidden');
+
+        pruefenBtn.disabled = !(file && quelle && validateQuelle());
+        importierenBtn.disabled = !(file && quelle && validateQuelle() && vorschauSichtbar && einwilligung);
+    }
+}
+
+async function importPruefen(m) {
+    const fileInput = document.getElementById('import-file');
+    const quelleInput = document.getElementById('import-quelle');
+    const errorDiv = document.getElementById('import-error');
+    const vorschauDiv = document.getElementById('import-vorschau');
+    const einwilligungDiv = document.getElementById('import-einwilligung');
+
+    errorDiv.classList.add('hidden');
+    vorschauDiv.classList.add('hidden');
+    einwilligungDiv.classList.add('hidden');
+
+    const file = fileInput.files[0];
+    if (!file) {
+        errorDiv.textContent = 'Bitte Datei wählen';
+        errorDiv.classList.remove('hidden');
+        return;
+    }
+
+    if (file.size > 3 * 1024 * 1024) {
+        errorDiv.textContent = 'Datei zu groß (maximal 3 MB)';
+        errorDiv.classList.remove('hidden');
+        return;
+    }
+
+    try {
+        const daten = await file.text();
+        const quelle = quelleInput.value.trim();
+
+        const body = {
+            daten,
+            quelle,
+            nur_pruefen: true
+        };
+
+        const rolleSelect = document.getElementById('import-rolle');
+        if (rolleSelect && rolleSelect.value) {
+            body.rolle = rolleSelect.value;
+        }
+
+        const interessenCheckboxes = document.querySelectorAll('.import-interesse:checked');
+        if (interessenCheckboxes.length > 0) {
+            body.interessen = Array.from(interessenCheckboxes).map(cb => cb.value);
+        }
+
+        const result = await apiCall(`/mandanten/${m.id}/abonnenten/import`, {
+            method: 'POST',
+            body: JSON.stringify(body)
+        });
+
+        // Vorschau anzeigen
+        vorschauDiv.innerHTML = '';
+        const title = document.createElement('h3');
+        title.textContent = 'Vorschau';
+        vorschauDiv.appendChild(title);
+
+        const stats = document.createElement('dl');
+        stats.style.marginTop = '1rem';
+
+        const addStat = (label, value, className = '') => {
+            const dt = document.createElement('dt');
+            dt.textContent = label;
+            dt.style.fontWeight = '600';
+            dt.style.marginTop = '0.5rem';
+            stats.appendChild(dt);
+            const dd = document.createElement('dd');
+            dd.textContent = value;
+            dd.style.marginLeft = '1rem';
+            if (className) dd.className = className;
+            stats.appendChild(dd);
+        };
+
+        addStat('Zeilen', result.zeilen);
+        addStat('Neu', result.neu);
+        addStat('Dublette', result.dublette);
+        addStat('Ungültig', result.ungueltig);
+        addStat('Übersprungen', result.uebersprungen_gesamt);
+        if (result.zusammengefuehrt > 0) addStat('Zusammengeführt', result.zusammengefuehrt);
+        if (result.rolle_konflikt > 0) addStat('Rolle-Konflikt', result.rolle_konflikt, 'warning-text');
+
+        if (result.uebersprungen) {
+            if (result.uebersprungen.abgemeldet > 0) addStat('  - Abgemeldet', result.uebersprungen.abgemeldet);
+            if (result.uebersprungen.unzustellbar > 0) addStat('  - Unzustellbar', result.uebersprungen.unzustellbar);
+            if (result.uebersprungen.unbestaetigt > 0) addStat('  - Unbestätigt', result.uebersprungen.unbestaetigt);
+            if (result.uebersprungen.status > 0) addStat('  - Anderer Status', result.uebersprungen.status);
+        }
+
+        vorschauDiv.appendChild(stats);
+
+        const kennzahlenTitle = document.createElement('h4');
+        kennzahlenTitle.textContent = 'Aktuelle Kennzahlen';
+        kennzahlenTitle.style.marginTop = '1.5rem';
+        vorschauDiv.appendChild(kennzahlenTitle);
+
+        const kennzahlenStats = document.createElement('dl');
+        kennzahlenStats.style.marginTop = '0.5rem';
+        if (result.kennzahlen) {
+            addStat.call({appendChild: (el) => kennzahlenStats.appendChild(el)}, 'Bestätigt', result.kennzahlen.bestaetigt);
+            addStat.call({appendChild: (el) => kennzahlenStats.appendChild(el)}, 'Unbestätigt', result.kennzahlen.unbestaetigt);
+            addStat.call({appendChild: (el) => kennzahlenStats.appendChild(el)}, 'Abgemeldet', result.kennzahlen.abgemeldet);
+            addStat.call({appendChild: (el) => kennzahlenStats.appendChild(el)}, 'Unzustellbar', result.kennzahlen.unzustellbar);
+        }
+        vorschauDiv.appendChild(kennzahlenStats);
+
+        vorschauDiv.classList.remove('hidden');
+        einwilligungDiv.classList.remove('hidden');
+
+        document.getElementById('import-einwilligung-check').checked = false;
+        document.getElementById('btn-importieren').disabled = true;
+
+    } catch (err) {
+        errorDiv.textContent = err.message;
+        errorDiv.classList.remove('hidden');
+    }
+}
+
+async function importDurchfuehren(m) {
+    const fileInput = document.getElementById('import-file');
+    const quelleInput = document.getElementById('import-quelle');
+    const errorDiv = document.getElementById('import-error');
+    const ergebnisDiv = document.getElementById('import-ergebnis');
+    const einwilligungCheck = document.getElementById('import-einwilligung-check');
+
+    errorDiv.classList.add('hidden');
+    ergebnisDiv.classList.add('hidden');
+
+    if (!einwilligungCheck.checked) {
+        errorDiv.textContent = 'Bitte Einwilligung bestätigen';
+        errorDiv.classList.remove('hidden');
+        return;
+    }
+
+    try {
+        const daten = await fileInput.files[0].text();
+        const quelle = quelleInput.value.trim();
+
+        const body = {
+            daten,
+            quelle,
+            nur_pruefen: false,
+            einwilligung_bestaetigt: true
+        };
+
+        const rolleSelect = document.getElementById('import-rolle');
+        if (rolleSelect && rolleSelect.value) {
+            body.rolle = rolleSelect.value;
+        }
+
+        const interessenCheckboxes = document.querySelectorAll('.import-interesse:checked');
+        if (interessenCheckboxes.length > 0) {
+            body.interessen = Array.from(interessenCheckboxes).map(cb => cb.value);
+        }
+
+        const result = await apiCall(`/mandanten/${m.id}/abonnenten/import`, {
+            method: 'POST',
+            body: JSON.stringify(body)
+        });
+
+        // Ergebnis anzeigen
+        ergebnisDiv.innerHTML = '';
+        const successTitle = document.createElement('h3');
+        successTitle.textContent = 'Import abgeschlossen';
+        successTitle.style.color = 'var(--color-success)';
+        ergebnisDiv.appendChild(successTitle);
+
+        const stats = document.createElement('dl');
+        stats.style.marginTop = '1rem';
+
+        const addStat = (label, value) => {
+            const dt = document.createElement('dt');
+            dt.textContent = label;
+            dt.style.fontWeight = '600';
+            dt.style.marginTop = '0.5rem';
+            stats.appendChild(dt);
+            const dd = document.createElement('dd');
+            dd.textContent = value;
+            dd.style.marginLeft = '1rem';
+            stats.appendChild(dd);
+        };
+
+        addStat('Neu', result.neu);
+        addStat('Dublette', result.dublette);
+        addStat('Ungültig', result.ungueltig);
+        addStat('Übersprungen', result.uebersprungen_gesamt);
+        if (result.zusammengefuehrt > 0) addStat('Zusammengeführt', result.zusammengefuehrt);
+        if (result.rolle_konflikt > 0) addStat('Rolle-Konflikt', result.rolle_konflikt);
+
+        ergebnisDiv.appendChild(stats);
+        ergebnisDiv.classList.remove('hidden');
+
+        showToast('Import erfolgreich', 'success');
+
+        // Formular zurücksetzen
+        document.getElementById('import-form').reset();
+        document.getElementById('import-vorschau').classList.add('hidden');
+        document.getElementById('import-einwilligung').classList.add('hidden');
+        document.getElementById('btn-pruefen').disabled = true;
+        document.getElementById('btn-importieren').disabled = true;
+
+    } catch (err) {
+        errorDiv.textContent = err.message;
+        errorDiv.classList.remove('hidden');
     }
 }
 
