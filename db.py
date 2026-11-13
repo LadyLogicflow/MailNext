@@ -102,6 +102,13 @@ CREATE TABLE IF NOT EXISTS empfaenger (
     UNIQUE(entwurf_id, schluessel)
 );
 CREATE INDEX IF NOT EXISTS idx_empfaenger_status ON empfaenger(mandant_id, status, zeit);
+-- Zählung der KI-Aufrufe für das Limit (Pseudonym des Betreibers, Zeitpunkt; wird nach 2 Tagen gelöscht, keine Inhalte).
+CREATE TABLE IF NOT EXISTS ki_aufruf (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    betreiber TEXT NOT NULL,
+    zeit TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ki_aufruf ON ki_aufruf(betreiber, zeit);
 CREATE TABLE IF NOT EXISTS audit_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     zeit TEXT NOT NULL,

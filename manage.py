@@ -6,6 +6,8 @@
     python manage.py versand <slug> aus|datei            (smtp nur über die Betreiber-Schnittstelle, Passwörter nie in der Kommandozeile)
     python manage.py liste                               (Mandanten mit Zahlen)
     python manage.py abonnenten <slug>                   (Adressen und Status dieses Mandanten)
+    python manage.py ki-schluessel                       (KI-Zugangsschlüssel eingeben, wird am Terminal ohne Anzeige abgefragt und verschlüsselt gespeichert; "ki-schluessel-loeschen" entfernt ihn)
+    python manage.py ki-aktiv <slug> ja|nein             (KI-Textverbesserung je Mandant, Standard nein)
     python manage.py import <slug> <datei.csv> "<Quelle>" [nur-pruefen] [einwilligung-liegt-vor] [rolle=<Wert>] [interessen=<Wert,Wert>]
                                                          (Bestandsadressen aus einem Mailchimp-Export; ohne einwilligung-liegt-vor nur Prüfung, es wird nichts gespeichert)
 
@@ -116,6 +118,23 @@ def main(argv: list) -> int:
             db.audit("manage", "abonnenten_gelesen", "mandant=%s anzahl=%d" % (m["slug"], len(zeilen)))
             for z in zeilen:
                 print("%-8s %s" % (z["status"], z["email"]))
+        elif befehl == "ki-schluessel" and not rest:
+            import getpass
+            import ki
+            ki.schluessel_setzen(getpass.getpass("KI-Zugangsschlüssel (keine Anzeige): ").strip(), "manage")
+            db.audit("manage", "ki_schluessel_gesetzt", "")
+            print("KI-Zugangsschlüssel gespeichert (verschlüsselt).")
+        elif befehl == "ki-schluessel-loeschen" and not rest:
+            import ki
+            ki.schluessel_loeschen()
+            db.audit("manage", "ki_schluessel_geloescht", "")
+            print("KI-Zugangsschlüssel gelöscht.")
+        elif befehl == "ki-aktiv" and len(rest) == 2 and rest[1] in ("ja", "nein"):
+            import ki
+            m_ = _mandant(rest[0])
+            ki.aktiv_setzen(m_["id"], rest[1] == "ja", "manage")
+            db.audit("manage", "ki_schalter", "mandant=%s aktiv=%s" % (m_["slug"], rest[1]))
+            print("KI-Textverbesserung für %s: %s" % (m_["slug"], rest[1]))
         elif befehl == "import" and len(rest) >= 3:
             return _import(rest)
         else:
@@ -124,6 +143,11 @@ def main(argv: list) -> int:
     except mandanten.Ungueltig as exc:
         print("Fehler: %s" % exc)
         return 1
+    except Exception as exc:                                   # KI-Schlüssel mit ungültigem Format u. a.: nie Werte ausgeben
+        if exc.__class__.__name__ == "Fehler":
+            print("Fehler: %s" % getattr(exc, "meldung", "ungültige Eingabe"))
+            return 1
+        raise
     return 0
 
 

@@ -10,6 +10,7 @@ import abonnenten
 import betreiber_auth
 import db
 import import_csv
+import ki
 import mandanten
 import newsletter
 from mandanten import Ungueltig
@@ -206,6 +207,79 @@ def abonnenten_vorschau(mandant_id):
         return jsonify({"error": fehler.code, "meldung": fehler.meldung}), fehler.status
     _audit("segment_vorschau", "mandant=%s anzahl=%d" % (m["slug"], v["anzahl"]))
     return jsonify(v)
+
+
+# ----- KI-Textverbesserung (Claude): Schalter je Mandant, Zugangsschlüssel (nur schreibbar), Vorschlag auf Klick -----
+
+@bp.get("/ki")
+@betreiber_auth.betreiber_pflicht
+def ki_zugang_lesen():
+    """Nur ob ein Zugangsschlüssel gesetzt ist, nie der Schlüssel."""
+    return jsonify({"schluessel_gesetzt": ki.schluessel_gesetzt(), "modell": ki.MODELL})
+
+
+@bp.put("/ki")
+@betreiber_auth.betreiber_pflicht
+def ki_zugang_setzen():
+    d = _json()
+    if d is None or set(d) != {"schluessel"}:
+        return _fehler("Bitte {\"schluessel\": \"...\"} senden.")
+    try:
+        ki.schluessel_setzen(d["schluessel"], g.betreiber["email"])
+    except ki.Fehler as f:
+        return jsonify({"error": f.code, "meldung": f.meldung}), f.status
+    _audit("ki_schluessel_gesetzt", "")                                              # nie der Wert
+    return jsonify({"schluessel_gesetzt": True})
+
+
+@bp.delete("/ki")
+@betreiber_auth.betreiber_pflicht
+def ki_zugang_loeschen():
+    ki.schluessel_loeschen()
+    _audit("ki_schluessel_geloescht", "")
+    return jsonify({"schluessel_gesetzt": False})
+
+
+@bp.get("/mandanten/<int:mandant_id>/ki")
+@betreiber_auth.betreiber_pflicht
+def ki_mandant_lesen(mandant_id):
+    m = _mandant_oder_404(mandant_id)
+    if m is None:
+        return jsonify({"error": "nicht_gefunden"}), 404
+    return jsonify(ki.zustand(m["id"]))
+
+
+@bp.put("/mandanten/<int:mandant_id>/ki")
+@betreiber_auth.betreiber_pflicht
+def ki_mandant_setzen(mandant_id):
+    m = _mandant_oder_404(mandant_id)
+    if m is None:
+        return jsonify({"error": "nicht_gefunden"}), 404
+    d = _json()
+    if d is None or set(d) != {"aktiv"} or not isinstance(d["aktiv"], bool):
+        return _fehler("Bitte {\"aktiv\": true|false} senden.")
+    ki.aktiv_setzen(m["id"], d["aktiv"], g.betreiber["email"])
+    _audit("ki_schalter", "mandant=%s aktiv=%s" % (m["slug"], "ja" if d["aktiv"] else "nein"))
+    return jsonify(ki.zustand(m["id"]))
+
+
+@bp.post("/mandanten/<int:mandant_id>/entwuerfe/text-verbessern")
+@betreiber_auth.betreiber_pflicht
+def text_verbessern(mandant_id):
+    """Vorschlag der KI für Betreff und Text. Wird nirgends gespeichert. Audit und Log enthalten nur Zeichenzahlen, nie Texte."""
+    m = _mandant_oder_404(mandant_id)
+    if m is None:
+        return jsonify({"error": "nicht_gefunden"}), 404
+    d = _json()
+    if d is None or set(d) - {"betreff", "text", "anweisung"}:
+        return _fehler("Bitte betreff (optional), text und anweisung (optional) als JSON senden.")
+    try:
+        ergebnis = ki.verbessern(m, g.betreiber["email"], d.get("betreff"), d.get("text"), d.get("anweisung"))
+    except ki.Fehler as f:
+        _audit("ki_textverbesserung_fehler", "mandant=%s grund=%s" % (m["slug"], f.code))
+        return jsonify({"error": f.code, "meldung": f.meldung}), f.status
+    _audit("ki_textverbesserung", "mandant=%s zeichen_ein=%d zeichen_aus=%d" % (m["slug"], ergebnis["zeichen_ein"], ergebnis["zeichen_aus"]))
+    return jsonify({"vorschlag": ergebnis["vorschlag"]})
 
 
 # ----- Newsletter (Meilenstein B): Entwürfe, Testmail, Freigabe, Versand, Protokoll -----
