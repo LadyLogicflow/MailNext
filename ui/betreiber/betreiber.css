@@ -255,11 +255,11 @@ tbody tr {
     pointer-events: auto;
 }
 
-.toast.error {
+.toast.toast-error {
     background: var(--color-error);
 }
 
-.toast.success {
+.toast.toast-success {
     background: var(--color-success);
 }
 

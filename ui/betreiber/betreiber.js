@@ -7,18 +7,12 @@ let state = {
 };
 
 // Hilfsfunktionen
-function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text || '';
-    return div.innerHTML;
-}
-
 function showToast(message, type = 'info') {
     const toast = document.getElementById('toast');
     toast.textContent = message;
     toast.className = 'toast show';
-    if (type === 'error') toast.classList.add('error');
-    if (type === 'success') toast.classList.add('success');
+    if (type === 'error') toast.classList.add('toast-error');
+    if (type === 'success') toast.classList.add('toast-success');
 
     setTimeout(() => {
         toast.className = 'toast';
@@ -35,9 +29,21 @@ async function apiCall(path, options = {}) {
         }
     });
 
-    const data = await response.json();
+    // Nicht-JSON-Antworten abfangen (503/Proxy)
+    let data;
+    try {
+        data = await response.json();
+    } catch (e) {
+        if (response.status === 401 || response.status === 403) {
+            throw new Error('Bitte im Portal als Betreiber anmelden');
+        }
+        throw new Error(`Fehler ${response.status}: ${response.statusText || 'Keine Antwort vom Server'}`);
+    }
 
     if (!response.ok) {
+        if (response.status === 401 || response.status === 403) {
+            throw new Error('Bitte im Portal als Betreiber anmelden');
+        }
         throw new Error(data.meldung || data.error || 'Ein Fehler ist aufgetreten');
     }
 
@@ -142,7 +148,11 @@ function renderMandantenListe() {
 
         const aboCell = document.createElement('td');
         const abo = m.abonnenten || {};
-        aboCell.textContent = `${abo.aktiv || 0} / ${abo.gesamt || 0}`;
+        const bestaetigt = abo.bestaetigt || 0;
+        const unbestaetigt = abo.unbestaetigt || 0;
+        aboCell.textContent = unbestaetigt > 0
+            ? `${bestaetigt} bestätigt, ${unbestaetigt} unbestätigt`
+            : `${bestaetigt} bestätigt`;
         row.appendChild(aboCell);
 
         // TODO: Click-Handler für Details (Schritt 2)
