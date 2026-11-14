@@ -366,14 +366,14 @@ function renderMandantDetails(m) {
 
     // Aktiv
     const aktivGroup = document.createElement('div');
-    aktivGroup.className = 'form-group';
+    aktivGroup.className = 'form-group checkbox-inline';
     const aktivLabel = document.createElement('label');
     const aktivCheckbox = document.createElement('input');
     aktivCheckbox.type = 'checkbox';
     aktivCheckbox.id = 'edit-aktiv';
     aktivCheckbox.checked = m.aktiv;
     aktivLabel.appendChild(aktivCheckbox);
-    aktivLabel.appendChild(document.createTextNode(' Aktiv'));
+    aktivLabel.appendChild(document.createTextNode('Aktiv'));
     aktivGroup.appendChild(aktivLabel);
     form.appendChild(aktivGroup);
 
@@ -384,15 +384,48 @@ function renderMandantDetails(m) {
     farbTitle.textContent = 'Farben';
     farbGroup.appendChild(farbTitle);
 
+    const farbLabels = {
+        farbe_primaer: 'Primärfarbe',
+        farbe_akzent: 'Akzentfarbe',
+        farbe_hintergrund: 'Hintergrund',
+        farbe_text: 'Text'
+    };
+
     ['farbe_primaer', 'farbe_akzent', 'farbe_hintergrund', 'farbe_text'].forEach(f => {
+        const fieldGroup = document.createElement('div');
+        fieldGroup.className = 'form-group';
+        fieldGroup.style.marginBottom = '0.75rem';
+
         const label = document.createElement('label');
-        label.textContent = f.replace('farbe_', '').replace('_', ' ');
+        label.textContent = farbLabels[f];
+        fieldGroup.appendChild(label);
+
+        const wrapper = document.createElement('div');
+        wrapper.className = 'color-input-wrapper';
+
         const input = document.createElement('input');
         input.type = 'color';
         input.id = `edit-${f}`;
         input.value = m.design[f] || '#000000';
-        label.appendChild(input);
-        farbGroup.appendChild(label);
+        wrapper.appendChild(input);
+
+        const hexDisplay = document.createElement('span');
+        hexDisplay.className = 'color-hex-display';
+        hexDisplay.textContent = m.design[f] || '#000000';
+        wrapper.appendChild(hexDisplay);
+
+        const hint = document.createElement('small');
+        hint.textContent = '#rrggbb';
+        hint.style.marginLeft = '0.5rem';
+        hint.style.color = '#9ca3af';
+        wrapper.appendChild(hint);
+
+        input.addEventListener('input', () => {
+            hexDisplay.textContent = input.value;
+        });
+
+        fieldGroup.appendChild(wrapper);
+        farbGroup.appendChild(fieldGroup);
     });
     form.appendChild(farbGroup);
 
