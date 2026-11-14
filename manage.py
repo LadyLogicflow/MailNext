@@ -4,6 +4,14 @@
     python manage.py design <slug> design.json          (ändert nur die genannten Felder)
     python manage.py einwilligung <slug> <version> "<Text in einer Zeile>"
     python manage.py versand <slug> aus|datei            (smtp nur über die Betreiber-Schnittstelle, Passwörter nie in der Kommandozeile)
+    python manage.py smtp <slug> <host> <port> <benutzer> ssl|starttls   (SMTP-Konto des Mandanten; das Passwort wird am Terminal ohne Anzeige abgefragt; schaltet den Versandmodus auf smtp,
+                                                         setzt die Absenderadresse im Design voraus)
+    python manage.py echtversand <slug> ja|nein         (Echtversand an Abonnenten für diesen Mandanten freigeben oder sperren)
+    python manage.py versand-rate <slug> <1-600>        (Mails pro Stunde, Standard 100)
+    python manage.py entwurf <slug> <datei> [ziel=testliste|abonnenten] [segment=<datei.json>]
+                                                         (Datei: erste Zeile "Betreff: ...", dann eine Leerzeile, dann der Text; Standard-Ziel testliste)
+    python manage.py testmail <slug> <entwurf_id> [adresse]   (Adresse muss in der Testliste stehen; ohne Adresse geht sie an MAILNEXT_BETREIBER_OFFEN_EMAIL)
+    python manage.py freigeben <slug> <entwurf_id>       (zeigt Ziel und Empfängerzahl, verlangt die Empfängerzahl zur Bestätigung; gleiche Prüfungen wie die Betreiber-Schnittstelle)
     python manage.py liste                               (Mandanten mit Zahlen)
     python manage.py abonnenten <slug>                   (Adressen und Status dieses Mandanten)
     python manage.py ki-schluessel                       (KI-Zugangsschlüssel eingeben, wird am Terminal ohne Anzeige abgefragt und verschlüsselt gespeichert; "ki-schluessel-loeschen" entfernt ihn)
@@ -20,6 +28,7 @@ import config
 import db
 import import_csv
 import mandanten
+import newsletter
 
 
 def _start() -> None:
@@ -83,6 +92,72 @@ def _import(rest: list) -> int:
     return 0
 
 
+def _entwurf_datei(pfad: str) -> tuple:
+    """(Betreff, Text) aus einer Datei: erste Zeile 'Betreff: ...', dann eine Leerzeile, dann der Text."""
+    zeilen = _text(pfad).replace("\r\n", "\n").split("\n")
+    if not zeilen or not zeilen[0].startswith("Betreff:"):
+        raise SystemExit("Die erste Zeile der Datei muss mit 'Betreff:' beginnen")
+    return zeilen[0][len("Betreff:"):].strip(), "\n".join(zeilen[1:]).strip("\n")
+
+
+def _versand_befehl(befehl: str, rest: list) -> int | None:
+    """Versandbefehle. Sie rufen dieselben Funktionen wie die Betreiber-Schnittstelle auf (keine zweite Logik). None = kein Versandbefehl."""
+    akteur = config.betreiber_offen_email() or "manage"
+    if befehl == "smtp" and len(rest) == 5:
+        import getpass
+        m = _mandant(rest[0])
+        passwort = getpass.getpass("SMTP-Passwort (keine Anzeige): ")
+        mandanten.versand_setzen(m["id"], {"smtp_host": rest[1], "smtp_port": rest[2], "smtp_benutzer": rest[3], "smtp_verschluesselung": rest[4],
+                                           "smtp_passwort": passwort, "versandmodus": "smtp"}, "manage")
+        db.audit("manage", "versand_geaendert", "mandant=%s smtp versandmodus=smtp" % m["slug"])            # nie das Passwort
+        print("SMTP-Konto von %s gespeichert (verschlüsselt), Versandmodus: smtp" % m["slug"])
+    elif befehl == "echtversand" and len(rest) == 2 and rest[1] in ("ja", "nein"):
+        m = _mandant(rest[0])
+        newsletter.echtversand_setzen(m["id"], rest[1] == "ja", "manage")
+        db.audit("manage", "echtversand_geaendert", "mandant=%s freigegeben=%s" % (m["slug"], "true" if rest[1] == "ja" else "false"))
+        print("Echtversand für %s: %s" % (m["slug"], rest[1]))
+    elif befehl == "versand-rate" and len(rest) == 2 and rest[1].isdigit():
+        m = _mandant(rest[0])
+        wert = newsletter.limit_pro_stunde_setzen(m["id"], int(rest[1]), "manage")
+        db.audit("manage", "versand_rate_geaendert", "mandant=%s limit_pro_stunde=%d" % (m["slug"], wert))
+        print("Versandrate von %s: %d Mails pro Stunde" % (m["slug"], wert))
+    elif befehl == "entwurf" and len(rest) >= 2:
+        m = _mandant(rest[0])
+        ziel = next((o.split("=", 1)[1] for o in rest[2:] if o.startswith("ziel=")), "testliste")
+        segment_datei = next((o.split("=", 1)[1] for o in rest[2:] if o.startswith("segment=")), None)
+        betreff, text = _entwurf_datei(rest[1])
+        e = newsletter.anlegen(m, betreff, text, ziel, _datei(segment_datei) if segment_datei else None)
+        db.audit("manage", "entwurf_angelegt", "mandant=%s entwurf=%d ziel=%s" % (m["slug"], e["id"], e["ziel"]))
+        print("Entwurf %d für %s angelegt (Ziel %s)" % (e["id"], m["slug"], e["ziel"]))
+    elif befehl == "testmail" and len(rest) in (2, 3) and rest[1].isdigit():
+        m = _mandant(rest[0])
+        newsletter.testmail(m, int(rest[1]), rest[2] if len(rest) == 3 else None, config.betreiber_offen_email())
+        db.audit("manage", "testmail_gesendet", "mandant=%s entwurf=%d" % (m["slug"], int(rest[1])))               # Adresse steht nicht im Audit
+        print("Testmail zu Entwurf %s gesendet" % rest[1])
+    elif befehl == "freigeben" and len(rest) == 2 and rest[1].isdigit():
+        m = _mandant(rest[0])
+        entwurf_id = int(rest[1])
+        e = newsletter.lesen(m, entwurf_id)
+        if e is None:
+            raise SystemExit("Entwurf %d gibt es bei %s nicht" % (entwurf_id, m["slug"]))
+        anzahl = newsletter.vorschau(m, entwurf_id)["anzahl"]
+        print("Entwurf %d: \"%s\"\nZiel: %s, Empfänger: %d, Versandmodus: %s, Echtversand freigegeben: %s" % (
+            entwurf_id, e["betreff"], e["ziel"], anzahl, mandanten.versandmodus(m["id"]), "ja" if newsletter.echtversand_freigegeben(m["id"]) else "nein"))
+        try:
+            eingabe = input("Zur Bestätigung die Empfängerzahl eingeben (%d): " % anzahl).strip()
+        except EOFError:
+            eingabe = ""
+        if eingabe != str(anzahl):
+            print("Abgebrochen: nichts freigegeben.")
+            return 1
+        ergebnis = newsletter.freigeben(m, entwurf_id, e["content_hash"], True, akteur)
+        db.audit("manage", "entwurf_freigegeben", "mandant=%s entwurf=%d empfaenger=%d" % (m["slug"], entwurf_id, ergebnis["empfaenger"]))
+        print("Freigegeben: %d Empfänger werden im Rahmen der Versandrate bedient." % ergebnis["empfaenger"])
+    else:
+        return None
+    return 0
+
+
 def main(argv: list) -> int:
     if not argv or argv[0] in ("-h", "--help"):
         print(__doc__)
@@ -137,6 +212,8 @@ def main(argv: list) -> int:
             print("KI-Textverbesserung für %s: %s" % (m_["slug"], rest[1]))
         elif befehl == "import" and len(rest) >= 3:
             return _import(rest)
+        elif befehl in ("smtp", "echtversand", "versand-rate", "entwurf", "testmail", "freigeben") and (ergebnis := _versand_befehl(befehl, rest)) is not None:
+            return ergebnis
         else:
             print(__doc__)
             return 2

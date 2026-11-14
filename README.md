@@ -49,7 +49,7 @@ Rechtlich offen (catrin/Irony): Vertragslage mit Anthropic und 14 Tage Ankündig
 - `testliste` (GET, PUT, höchstens 50), `echtversand` (GET, PUT `{freigegeben: bool}`, Standard false).
 - Regeln: Freigabe nur mit Testmail zum aktuellen Stand (SHA-256 über Betreff, Text, Ziel, Segment); Empfängerliste wird bei der Freigabe festgeschrieben (nur bestätigte Adressen);
   Echtversand (`ziel: abonnenten`) nur nach Freigabe des Mandanten, auch der Versandlauf prüft das nochmals; Abmeldestatus wird vor jedem Senden erneut geprüft.
-- Versandlauf: jede Minute im Hintergrund (`MAILNEXT_VERSAND_JOB=0` schaltet ihn ab), höchstens 5 Mails je Lauf und 100 je Stunde und Mandant, höchstens einmal je Person und Entwurf.
+- Versandlauf: jede Minute im Hintergrund (`MAILNEXT_VERSAND_JOB=0` schaltet ihn ab), je Mandant standardmäßig 100 Mails je Stunde (einstellbar 1 bis 600, `PUT …/versand-rate` oder `manage.py versand-rate`), je Lauf mindestens 5 und bei höherem Limit entsprechend mehr, höchstens einmal je Person und Entwurf.
   Vorübergehende Fehler: bis zu 3 Versuche im Abstand von 5 Minuten, dann `fehlgeschlagen`. Harte Ablehnung: Adresse wird `unzustellbar`. Hängt eine Zeile über 10 Minuten in `sending`, wird sie `unklar` und nie automatisch wiederholt.
 - Jede Mail: Text und HTML im Mandantendesign, persönlicher Einstellungs- und Abmeldelink, `List-Unsubscribe` mit One-Click, kein Tracking.
 
@@ -57,14 +57,25 @@ Rechtlich offen (catrin/Irony): Vertragslage mit Anthropic und 14 Tage Ankündig
 Standard je Mandant: `aus` (es geht keine Mail hinaus). `datei`: Mails landen als .eml unter `<Daten>/ausgang/<slug>/` (Test auf dem Pi, 7 Tage). `smtp`: über das SMTP-Konto des Mandanten.
 
 ## Kommandozeile (Einrichtung und Tests)
-`python manage.py` – Mandant anlegen, Design ändern, Einwilligungstext anlegen, Versandmodus aus/datei, Liste, Abonnenten (siehe Kopf der Datei).
+`python manage.py` – Mandant anlegen, Design ändern, Einwilligungstext anlegen, Versandmodus aus/datei, Liste, Abonnenten, Import (siehe Kopf der Datei). Ab 0.5.0 auch der Versand:
+`smtp` (Konto je Mandant, Passwort am Terminal ohne Anzeige), `echtversand ja|nein`, `versand-rate`, `entwurf` (aus einer Datei), `testmail`, `freigeben` (mit Empfängerzahl als Bestätigung).
+Sie rufen dieselben Funktionen wie die Betreiber-Schnittstelle auf (gleiche Prüfungen, kein Parallelcode) und schreiben ins Audit-Log (Akteur `manage`).
+
+## Betreiber-Anmeldung und Pi-Testinstanz (ab 0.5.0)
+- `MAILNEXT_BETREIBER_AUTH`: `portal` (Standard: Portal-Cookie, unverändert) oder `offen` (nur Pi im Heimnetz: Betreiber-Oberfläche und -Schnittstelle ohne Anmeldung). Jeder andere Wert gilt als `portal`.
+  Im Offen-Modus wird ein Betreiberaufruf nur beantwortet, wenn die Verbindung direkt von einer Loopback-/privaten Adresse kommt, kein Proxy-Kopf vorhanden ist, der Host-Kopf `MAILNEXT_PI_ADRESSE` oder localhost ist und ändernde Aufrufe mit Origin-Kopf vom selben Host stammen; sonst 403. Start-Warnung im Log, `/health` zeigt `betreiber_offen`.
+  `MAILNEXT_BETREIBER_OFFEN_EMAIL`: Akteur im Audit und Standard-Empfänger der Testmail im Offen-Modus (ohne sie braucht die Testmail eine Adresse aus der Testliste im Aufruf, sonst 400 `empfaenger_fehlt`).
+- `MAILNEXT_OEFFENTLICHER_PORT` (z. B. `8001`): Auf diesem Port beantwortet die App nur die öffentlichen Newsletter-Seiten, alles andere 404. Entschieden wird am Port der Verbindung (nicht am Host-Kopf). Das Image lauscht auf 8000 (alles) und 8001; ein Tunnel/Reverse Proxy darf nur auf 8001 zeigen. Ohne die Variable gibt es keine Trennung (Produktion unverändert).
+- Freigabe an Abonnenten verlangt ab 0.5.0 `impressum_url`, `datenschutz_url`, `firmenangaben` und `absender_adresse` im Design, sonst 409 `pflichtangaben_fehlen` (Feldnamen, keine Werte). Freigaben an die Testliste sind ausgenommen.
+- Versandrate je Mandant: `GET`/`PUT /api/v1/betreiber/mandanten/<id>/versand-rate {"limit_pro_stunde": 1..600}` (Standard 100).
+- Anleitung für den Pi einschließlich Tunnel und Checkliste Echtversand: `PI-TESTINSTANZ.md`.
 
 ## Konfiguration
 - `MAILNEXT_HAUPTSCHLUESSEL` (geheim, mind. 32 Zeichen, kein Standardwert): Ohne ihn startet der Dienst,
   meldet aber unter `/health` HTTP 503 mit `hauptschluessel_fehlt`; öffentliche Aufrufe antworten 503 `nicht_bereit`. Es wird nie ein Ersatzschlüssel erzeugt.
 - `SORTNEXT_BASE_URL` (Standard `https://sortnext.bst-next.de`), `MAILNEXT_DATEN` (Standard `/data`),
   `MAILNEXT_BASIS_URL` (Standard `https://mailnext.bst-next.de`, für Links in Mails; je Mandant überschreibbar),
-  `MAILNEXT_PROXIES` (Anzahl vorgeschalteter Proxys für `X-Forwarded-For`, Standard 1).
+  `MAILNEXT_PROXIES` (Anzahl vorgeschalteter Proxys für `X-Forwarded-For`, Standard 1), `MAILNEXT_BETREIBER_AUTH`, `MAILNEXT_BETREIBER_OFFEN_EMAIL`, `MAILNEXT_PI_ADRESSE`, `MAILNEXT_OEFFENTLICHER_PORT` (siehe oben).
 - Alles Weitere (Mail-Konten, Mandanten) liegt in der Datenbank, Zugangsdaten verschlüsselt.
 
 ## Betrieb

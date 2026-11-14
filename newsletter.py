@@ -21,8 +21,10 @@ import mailer
 import mandanten
 import schluessel
 
-LIMIT_PRO_STUNDE = 100
-LIMIT_PRO_LAUF = 5
+LIMIT_PRO_STUNDE = 100                                                                    # Standard je Mandant, einstellbar (limit_pro_stunde)
+LIMIT_PRO_STUNDE_MIN, LIMIT_PRO_STUNDE_MAX = 1, 600
+LIMIT_PRO_LAUF = 5                                                                        # Mindestzahl je Minute; bei höherem Stundenlimit wächst sie mit
+PFLICHTANGABEN = ("impressum_url", "datenschutz_url", "firmenangaben", "absender_adresse")      # Design-Felder, ohne die kein Echtversand freigegeben wird
 VERSUCHE_MAX = 3
 WIEDERHOLUNG_ABSTAND_MINUTEN = 5                                                          # nach einem vorübergehenden Fehler wird die Zeile erst später erneut versucht
 UNKLAR_NACH_MINUTEN = 10
@@ -176,6 +178,30 @@ def aendern(mandant: dict, entwurf_id: int, betreff, text, ziel, segment) -> dic
     return lesen(mandant, entwurf_id)
 
 
+# ----- Versandrate je Mandant -----
+
+def limit_pro_stunde(mandant_id: int) -> int:
+    import einstellungen
+    try:
+        wert = int(einstellungen.lesen("m%d/versand_limit_pro_stunde" % int(mandant_id), str(LIMIT_PRO_STUNDE)))
+    except (TypeError, ValueError):
+        return LIMIT_PRO_STUNDE
+    return wert if LIMIT_PRO_STUNDE_MIN <= wert <= LIMIT_PRO_STUNDE_MAX else LIMIT_PRO_STUNDE
+
+
+def limit_pro_stunde_setzen(mandant_id: int, wert, akteur: str) -> int:
+    if isinstance(wert, bool) or not isinstance(wert, int) or not LIMIT_PRO_STUNDE_MIN <= wert <= LIMIT_PRO_STUNDE_MAX:
+        raise Fehler("limit_ungueltig", "limit_pro_stunde muss eine ganze Zahl von %d bis %d sein" % (LIMIT_PRO_STUNDE_MIN, LIMIT_PRO_STUNDE_MAX), 400)
+    import einstellungen
+    einstellungen.setzen("m%d/versand_limit_pro_stunde" % int(mandant_id), str(wert), akteur)
+    return wert
+
+
+def mails_pro_lauf(limit: int) -> int:
+    """Wie viele Mails ein Durchgang (jede Minute) höchstens sendet: mindestens 5, bei hohem Stundenlimit entsprechend mehr."""
+    return max(LIMIT_PRO_LAUF, -(-int(limit) // 60))
+
+
 # ----- Testliste und Echtversand-Sperre -----
 
 def testliste(mandant: dict) -> list:
@@ -217,6 +243,8 @@ def testmail(mandant: dict, entwurf_id: int, an: str | None, betreiber_email: st
         raise Fehler("nicht_gefunden", "Entwurf nicht gefunden", 404)
     if z["status"] != "entwurf":
         raise Fehler("nicht_mehr_aenderbar", "Der Entwurf ist freigegeben")
+    if not an and not schluessel.email_gueltig(schluessel.normalisiere_email(betreiber_email)):
+        raise Fehler("empfaenger_fehlt", "Bitte eine Empfängeradresse aus der Testliste angeben (an)", 400)         # z. B. Offen-Modus ohne Standardadresse
     ziel_adresse = schluessel.normalisiere_email(an) if an else schluessel.normalisiere_email(betreiber_email)
     if an and ziel_adresse not in testliste(mandant):
         raise Fehler("adresse_nicht_in_testliste", "Diese Adresse steht nicht in der Testliste", 403)
@@ -268,6 +296,12 @@ def vorschau(mandant: dict, entwurf_id: int) -> dict:
     return {"anzahl": len(_empfaenger_ermitteln(mandant, z)), "segment": json.loads(z["segment"]), "ziel": z["ziel"]}
 
 
+def pflichtangaben_fehlend(mandant: dict) -> list:
+    """Namen der Design-Felder, die für den Echtversand fehlen (Impressum, Datenschutz, Firmenangaben, Absender). Nie Werte."""
+    design = mandant.get("design") or {}
+    return [f for f in PFLICHTANGABEN if not str(design.get(f) or "").strip()]
+
+
 def freigeben(mandant: dict, entwurf_id: int, content_hash, bestaetigt, betreiber_email: str) -> dict:
     z = _zeile(mandant["id"], entwurf_id)
     if z is None:
@@ -278,6 +312,10 @@ def freigeben(mandant: dict, entwurf_id: int, content_hash, bestaetigt, betreibe
         raise Fehler("bereits_freigegeben", "Der Entwurf ist schon freigegeben")
     if z["ziel"] == "abonnenten" and not echtversand_freigegeben(mandant["id"]):
         raise Fehler("echtversand_gesperrt", "Der Echtversand ist für diesen Mandanten noch nicht freigegeben")
+    if z["ziel"] == "abonnenten":
+        fehlend = pflichtangaben_fehlend(mandant)
+        if fehlend:
+            raise Fehler("pflichtangaben_fehlen", "Vor dem Echtversand müssen im Design gesetzt sein: " + ", ".join(fehlend), 409)
     if not z["testmail_hash"]:
         raise Fehler("testmail_fehlt", "Es gibt noch keine Testmail zu diesem Entwurf")
     if content_hash != z["content_hash"] or z["testmail_hash"] != z["content_hash"]:
@@ -317,7 +355,7 @@ def status(mandant: dict, entwurf_id: int) -> dict:
     zahlen = {s["status"]: s["n"] for s in zeilen}
     return {"status": z["status"], "gesamt": sum(zahlen.values()), "gesendet": zahlen.get("sent", 0), "offen": zahlen.get("queued", 0) + zahlen.get("sending", 0),
             "fehlgeschlagen": zahlen.get("fehlgeschlagen", 0), "unzustellbar": zahlen.get("unzustellbar", 0), "uebersprungen_abgemeldet": zahlen.get("uebersprungen", 0),
-            "unklar": zahlen.get("unklar", 0), "abgebrochen": zahlen.get("abgebrochen", 0), "limit_pro_stunde": LIMIT_PRO_STUNDE,
+            "unklar": zahlen.get("unklar", 0), "abgebrochen": zahlen.get("abgebrochen", 0), "limit_pro_stunde": limit_pro_stunde(mandant["id"]),
             "versandmodus": mandanten.versandmodus(mandant["id"]), "echtversand_freigegeben": echtversand_freigegeben(mandant["id"])}
 
 
@@ -373,9 +411,10 @@ def lauf() -> dict:
         if modus == "aus":
             bilanz["wartet"] += 1
             continue
-        for _ in range(LIMIT_PRO_LAUF):
+        limit = limit_pro_stunde(m["id"])
+        for _ in range(mails_pro_lauf(limit)):
             with db.verbindung() as c:
-                if _gesendet_letzte_stunde(c, m["id"]) >= LIMIT_PRO_STUNDE:
+                if _gesendet_letzte_stunde(c, m["id"]) >= limit:
                     break
                 z = c.execute("SELECT e.*, w.ziel AS ziel, w.betreff AS betreff, w.text AS text FROM empfaenger e JOIN entwurf w ON w.id=e.entwurf_id "
                               "WHERE e.mandant_id=? AND e.status='queued' AND w.status IN ('freigegeben','sendet') AND (e.fehler IS NULL OR e.zeit<?) "

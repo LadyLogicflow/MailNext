@@ -3,6 +3,10 @@
 # Pflicht in der Datei .env neben dieser Datei (Vorlage: pi.env.beispiel; die Datei .env nie weitergeben oder einchecken):
 #   MAILNEXT_HAUPTSCHLUESSEL   mindestens 32 Zeichen, zufällig
 #   MAILNEXT_PI_ADRESSE        Adresse oder Name des Pi im Heimnetz (z. B. 192.168.1.50), unter der die Testinstanz erreicht wird
+# Optional (siehe PI-TESTINSTANZ.md):
+#   MAILNEXT_BETREIBER_AUTH    "offen" schaltet die Betreiber-Oberfläche OHNE Anmeldung frei (nur von privaten Adressen); Standard "portal"
+#   MAILNEXT_BETREIBER_OFFEN_EMAIL  Adresse für Audit und Standard-Empfänger der Testmail im Offen-Modus
+#   MAILNEXT_BASIS_URL         öffentliche https-Adresse für Links in Mails, sobald Tunnel/Domain stehen; dann auch MAILNEXT_PROXIES=1 (Proxy/Tunnel vor Port 8001)
 services:
   mailnext:
     build:
@@ -11,12 +15,16 @@ services:
     image: mailnext:test
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "8000:8000"        # intern (Heimnetz): Betreiber-Oberfläche, Health
+      - "8001:8001"        # öffentlich: NUR dieser Port darf per Tunnel/Reverse Proxy nach außen (nur Anmelden, Bestätigen, Abmelden, Einstellungen)
     environment:
       MAILNEXT_HAUPTSCHLUESSEL: "${MAILNEXT_HAUPTSCHLUESSEL:?MAILNEXT_HAUPTSCHLUESSEL fehlt (.env)}"
-      MAILNEXT_BASIS_URL: "http://${MAILNEXT_PI_ADRESSE:?MAILNEXT_PI_ADRESSE fehlt (.env)}:8000"
+      MAILNEXT_BASIS_URL: "${MAILNEXT_BASIS_URL:-http://${MAILNEXT_PI_ADRESSE:?MAILNEXT_PI_ADRESSE fehlt (.env)}:8001}"
       MAILNEXT_DATEN: "/data"
-      MAILNEXT_PROXIES: "0"
+      MAILNEXT_PROXIES: "${MAILNEXT_PROXIES:-0}"
+      MAILNEXT_OEFFENTLICHER_PORT: "8001"
+      MAILNEXT_BETREIBER_AUTH: "${MAILNEXT_BETREIBER_AUTH:-portal}"
+      MAILNEXT_BETREIBER_OFFEN_EMAIL: "${MAILNEXT_BETREIBER_OFFEN_EMAIL:-}"
       SORTNEXT_BASE_URL: "${SORTNEXT_BASE_URL:-https://sortnext.bst-next.de}"
     volumes:
       - mailnext-daten:/data

@@ -20,6 +20,12 @@ bp = Blueprint("betreiber", __name__, url_prefix="/api/v1/betreiber")
 
 def _ip() -> str:
     from public import client_ip
+    if g.betreiber.get("offen"):
+        # Offen-Modus: Quelladresse nur als Pseudonym ins Audit (HMAC, nicht umkehrbar ohne Hauptschlüssel)
+        import hashlib
+        import hmac
+        import schluessel
+        return "h:" + hmac.new(schluessel._ableiten(b"mailnext-audit-ip-v1"), client_ip().encode("utf-8"), hashlib.sha256).hexdigest()[:16]
     return client_ip()
 
 
@@ -421,6 +427,24 @@ def testliste_setzen(m):
     adressen = newsletter.testliste_setzen(m, d.get("adressen"))
     _audit("testliste_gesetzt", "mandant=%s anzahl=%d" % (m["slug"], len(adressen)))
     return jsonify({"adressen": adressen})
+
+
+@bp.get("/mandanten/<int:mandant_id>/versand-rate")
+@betreiber_auth.betreiber_pflicht
+@_nl
+def versand_rate_lesen(m):
+    return jsonify({"limit_pro_stunde": newsletter.limit_pro_stunde(m["id"]), "standard": newsletter.LIMIT_PRO_STUNDE,
+                    "erlaubt_von": newsletter.LIMIT_PRO_STUNDE_MIN, "erlaubt_bis": newsletter.LIMIT_PRO_STUNDE_MAX})
+
+
+@bp.put("/mandanten/<int:mandant_id>/versand-rate")
+@betreiber_auth.betreiber_pflicht
+@_nl
+def versand_rate_setzen(m):
+    d = _json() or {}
+    wert = newsletter.limit_pro_stunde_setzen(m["id"], d.get("limit_pro_stunde"), g.betreiber["email"])
+    _audit("versand_rate_geaendert", "mandant=%s limit_pro_stunde=%d" % (m["slug"], wert))
+    return jsonify({"limit_pro_stunde": wert})
 
 
 @bp.get("/mandanten/<int:mandant_id>/echtversand")

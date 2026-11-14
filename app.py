@@ -2,7 +2,7 @@
 import logging
 import os
 
-from flask import Flask, Request, jsonify
+from flask import Flask, Request, abort, jsonify, request
 
 import config
 import db
@@ -30,6 +30,7 @@ def _health_daten() -> tuple[dict, bool]:
         logging.exception("Health: Datenbank nicht erreichbar")
         daten["datenbank"] = "fehler"
         gesund = False
+    daten["betreiber_offen"] = config.betreiber_auth() == "offen"
     daten["status"] = "ok" if gesund else "fehler"
     return daten, gesund
 
@@ -60,6 +61,20 @@ def create_app(db_pfad: str | None = None, versand_job: bool = False) -> Flask:
     app.register_blueprint(public.bp)
     app.register_blueprint(betreiber.bp)
     app.register_blueprint(betreiber_ui.bp)
+
+    if config.betreiber_auth() == "offen":
+        logging.warning("!!! OFFEN-MODUS AKTIV (MAILNEXT_BETREIBER_AUTH=offen): Die Betreiber-Oberfläche und -Schnittstelle sind OHNE Anmeldung benutzbar, "
+                        "nur von privaten Adressen und ohne Proxy-Kopf. Nur im Heimnetz verwenden, den internen Port nie nach außen freigeben.")
+    if config.oeffentlicher_port():
+        logging.info("Öffentlicher Port %s: dort werden nur die öffentlichen Newsletter-Seiten beantwortet", config.oeffentlicher_port())
+
+    @app.before_request
+    def _oeffentlicher_port_nur_oeffentliche_seiten():
+        """Auf dem öffentlichen Port (MAILNEXT_OEFFENTLICHER_PORT) gibt es nur die Seiten für Anmelden, Bestätigen, Abmelden und Einstellungen.
+        Entschieden wird am Port der Verbindung (WSGI SERVER_PORT, vom Server gesetzt), nicht am Host-Kopf, den der Absender frei wählt."""
+        port = config.oeffentlicher_port()
+        if port and request.environ.get("SERVER_PORT") == port and request.blueprint != "public":
+            abort(404)
 
     @app.errorhandler(einstellungen.HauptschluesselFehlt)
     def _nicht_bereit(_):
