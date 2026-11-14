@@ -168,6 +168,40 @@ main {
     box-shadow: 0 0 0 3px rgba(31, 58, 95, 0.1);
 }
 
+/* Color inputs */
+.form-group input[type="color"] {
+    width: 4rem;
+    height: 2.5rem;
+    padding: 0;
+    border: 1px solid var(--color-border);
+    border-radius: 6px;
+    cursor: pointer;
+}
+
+.color-input-wrapper {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.color-hex-display {
+    font-family: 'Courier New', monospace;
+    font-size: 0.95rem;
+    color: var(--color-text);
+}
+
+/* Checkbox inline layout */
+.form-group.checkbox-inline label {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.form-group.checkbox-inline input[type="checkbox"] {
+    width: auto;
+    margin: 0;
+}
+
 .form-group small {
     display: block;
     margin-top: 0.25rem;
