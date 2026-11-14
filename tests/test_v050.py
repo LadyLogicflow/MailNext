@@ -71,6 +71,16 @@ class OffenModusTests(OffenBasis):
         for kopf in ("X-Forwarded-For", "Forwarded", "X-Real-IP", "CF-Connecting-IP", "True-Client-IP", "X-Forwarded-Host", "X-Forwarded-Proto", "Via"):
             self.assertEqual(self.get(von="127.0.0.1", headers={kopf: "1.2.3.4"}).status_code, 403, kopf)
 
+    def test_host_mit_anderem_port_am_pi_gilt(self):
+        """Port am Pi 8200 -> Container 8000: der Browser sendet Host 192.168.1.50:8200; die Pi-Adresse wird ohne Port verglichen."""
+        for host in (PI + ":8200", PI + ":8201", PI):
+            self.assertEqual(self.get(host=host).status_code, 200, host)
+        self.assertEqual(self.get(host="192.168.1.51:8200").status_code, 403)
+        daten = {"slug": "neu-1", "name": "Neu e. V."}
+        self.assertEqual(self.post("/api/v1/betreiber/mandanten", daten, host=PI + ":8200", headers={"Origin": "http://%s:8200" % PI}).status_code, 201)
+        self.assertEqual(self.post("/api/v1/betreiber/mandanten", {"slug": "neu-2", "name": "Z"}, host=PI + ":8200",
+                                   headers={"Origin": "http://%s:8000" % PI}).status_code, 403)
+
     def test_host_muss_die_pi_adresse_oder_localhost_sein(self):
         for host in (PI, PI + ":8000", "localhost:8000", "127.0.0.1:8000", "[::1]:8000", "LOCALHOST"):
             self.assertEqual(self.get(host=host).status_code, 200, host)
@@ -162,6 +172,12 @@ class PortTrennungTests(OffenBasis):
             self.assertEqual(self.get(host=host, von="127.0.0.1", port="8001").status_code, 404, host)
         # ... und auf dem internen Port ändert ein Host-Kopf der Pi-Adresse mit :8001 nichts
         self.assertEqual(self.get(host=PI + ":8001", port="8000").status_code, 200)
+
+    def test_entscheidend_ist_der_containerport_nicht_der_port_am_pi(self):
+        # Port am Pi 8201 -> Container 8001: Host-Kopf zeigt 8201, die Verbindung kam aber am Container-Port 8001
+        self.assertEqual(self.get("/api/v1/betreiber/mandanten", host=PI + ":8201", port="8001").status_code, 404)
+        self.assertEqual(self.get("/api/hilo/newsletter/formular", host=PI + ":8201", port="8001").status_code, 200)
+        self.assertEqual(self.get("/api/v1/betreiber/mandanten", host=PI + ":8200", port="8000").status_code, 200)
 
     def test_ohne_die_variable_gibt_es_keine_trennung(self):
         with mock.patch.dict(os.environ, {"MAILNEXT_OEFFENTLICHER_PORT": ""}):
@@ -421,14 +437,44 @@ class AuslieferungTests(unittest.TestCase):
 
     def test_pi_compose(self):
         c = self.lesen("docker-compose.pi.yaml")
-        self.assertIn('"8001:8001"', c)
-        self.assertIn('MAILNEXT_OEFFENTLICHER_PORT: "8001"', c)
+        self.assertIn('"${MAILNEXT_PORT_INTERN:-8000}:8000"', c)                       # links Port am Pi (einstellbar), rechts Port im Container (fest)
+        self.assertIn('"${MAILNEXT_PORT_OEFFENTLICH:-8001}:8001"', c)
+        self.assertIn('MAILNEXT_OEFFENTLICHER_PORT: "8001"', c)                        # Container-Port, unabhängig vom Port am Pi
         self.assertIn('MAILNEXT_BETREIBER_AUTH: "${MAILNEXT_BETREIBER_AUTH:-portal}"', c)             # Standard bleibt die Portal-Anmeldung (fail closed)
         self.assertNotIn('MAILNEXT_BETREIBER_AUTH: "offen"', c)
 
+    def test_compose_reicht_jede_vom_code_gelesene_variable_durch(self):
+        """Fehler aus v0.5.0: MAILNEXT_PI_ADRESSE stand nur in der .env, wurde nicht in den Container gereicht, und die Host-Prüfung des Offen-Modus
+        gab über die Pi-Adresse 403. Jede MAILNEXT_*-Variable, die der Code liest, muss in der Pi-Compose stehen (außer den bewusst ausgenommenen)."""
+        import re
+        gelesen = set()
+        for name in os.listdir(self.ORDNER):
+            if name.endswith(".py") and not name.startswith(("test_", "manage")):
+                gelesen |= set(re.findall(r'environ(?:\.get)?[\[(]\s*"(MAILNEXT_[A-Z_]+)"', self.lesen(name)))
+        self.assertTrue({"MAILNEXT_PI_ADRESSE", "MAILNEXT_BETREIBER_AUTH", "MAILNEXT_OEFFENTLICHER_PORT", "MAILNEXT_HAUPTSCHLUESSEL"} <= gelesen, gelesen)
+        ausgenommen = {"MAILNEXT_VERSAND_JOB"}                                           # bewusst nicht gesetzt (Standard: Versandlauf an)
+        c = self.lesen("docker-compose.pi.yaml")
+        fehlt = sorted(n for n in gelesen - ausgenommen if not re.search(r"^\s+%s:" % n, c, re.M))
+        self.assertEqual(fehlt, [], "in der Pi-Compose nicht durchgereicht")
+
+    def test_basis_url_standard_folgt_dem_oeffentlichen_port(self):
+        c = self.lesen("docker-compose.pi.yaml")
+        self.assertIn('MAILNEXT_BASIS_URL: "${MAILNEXT_BASIS_URL:-http://${MAILNEXT_PI_ADRESSE}:${MAILNEXT_PORT_OEFFENTLICH:-8001}}"', c)
+        self.assertIn('MAILNEXT_PI_ADRESSE: "${MAILNEXT_PI_ADRESSE:?', c)                # Pflicht, kommt mit klarer Meldung
+
+    def test_jede_compose_variable_steht_in_der_vorlage(self):
+        import re
+        c = self.lesen("docker-compose.pi.yaml")
+        vorlage = self.lesen("pi.env.beispiel")
+        for name in sorted(set(re.findall(r"\$\{(MAILNEXT_[A-Z_]+|SORTNEXT_BASE_URL)[:?-]", c))):
+            if name == "SORTNEXT_BASE_URL":
+                continue                                                                   # hat einen festen Standard, bewusst nicht in der Vorlage
+            self.assertIn(name + "=", vorlage, name)
+
     def test_anleitung_nennt_die_regeln(self):
         a = self.lesen("PI-TESTINSTANZ.md")
-        for text in ("Nach außen darf nur Port 8001", "MAILNEXT_BETREIBER_AUTH=offen", "pflichtangaben_fehlen", "Port 8000 nie ins Internet", "SPF", "versand-rate"):
+        for text in ("Nach außen darf nur der öffentliche Port", "MAILNEXT_BETREIBER_AUTH=offen", "pflichtangaben_fehlen", "Port 8000 nie ins Internet", "SPF", "versand-rate",
+                     "MAILNEXT_PORT_INTERN", "MAILNEXT_PORT_OEFFENTLICH"):
             self.assertIn(text, a, text)
 
 

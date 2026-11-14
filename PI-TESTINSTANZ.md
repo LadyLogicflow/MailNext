@@ -22,11 +22,13 @@ Beim Echtversand gehen echte Mails an echte Menschen. Vorher die Checkliste unte
 | **8000** (intern) | nur das Heimnetz | alles: Betreiber-Oberfläche (`/betreiber`), Betreiber-Schnittstelle, `/health`, öffentliche Seiten |
 | **8001** (öffentlich) | darf per Tunnel oder Reverse Proxy nach außen | **nur** die öffentlichen Newsletter-Seiten: Anmelden, Bestätigen, Abmelden, Einstellungen, One-Click-Abmeldung. Alles andere (auch `/health`, `/betreiber`, `/api/v1/…`) antwortet dort mit 404. |
 
-Die Trennung entscheidet der Port der Verbindung, nicht der Host-Kopf, den ein Absender frei wählen kann. **Nach außen darf nur Port 8001 gezeigt werden, nie 8000.**
+Die Trennung entscheidet der Port der Verbindung **im Container** (8000/8001), nicht der Host-Kopf, den ein Absender frei wählen kann, und nicht der Port am Pi. **Nach außen darf nur der öffentliche Port (8001) gezeigt werden, nie der interne (8000).**
+
+**Sind 8000/8001 am Pi schon belegt?** Dann in `.env` andere Ports am Pi eintragen, z. B. `MAILNEXT_PORT_INTERN=8200` und `MAILNEXT_PORT_OEFFENTLICH=8201` (die Datei `docker-compose.pi.yaml` nicht von Hand ändern). Die Betreiber-Oberfläche liegt dann unter `http://<Pi-Adresse>:8200/betreiber`, ein Tunnel zeigt auf `http://<Pi>:8201`. Die Links in den Mails zeigen standardmäßig auf `http://<Pi-Adresse>:<öffentlicher Port>`; mit einer öffentlichen https-Adresse `MAILNEXT_BASIS_URL` setzen. `MAILNEXT_PI_ADRESSE` bleibt nur die Adresse, ohne Port (die Prüfung im Offen-Modus ignoriert den Port im Host-Kopf).
 
 ### Tunnel oder Reverse Proxy (öffentliche https-Adresse)
 Empfänger brauchen eine öffentlich erreichbare **https**-Adresse für Bestätigungs-, Abmelde- und Einstellungslinks (und der One-Click-Abmeldelink verlangt sie). Die Adresse (Domain oder Tunnel) kommt von catrin. Einrichten:
-1. Tunnel/Proxy so einstellen, dass er **ausschließlich** auf `http://<Pi>:8001` zeigt (nicht auf 8000). Den Port 8000 nicht im Router weiterleiten.
+1. Tunnel/Proxy so einstellen, dass er **ausschließlich** auf `http://<Pi>:<öffentlicher Port>` (Standard 8001) zeigt, nie auf den internen Port (Standard 8000). Den internen Port nicht im Router weiterleiten.
 2. In `.env` eintragen: `MAILNEXT_BASIS_URL=https://<öffentliche Adresse>` und, wenn Tunnel/Proxy vor 8001 sitzt, `MAILNEXT_PROXIES=1` (damit die Anmeldebegrenzung die echte Adresse des Besuchers sieht).
 3. Neu starten: `docker compose -f docker-compose.pi.yaml up -d`.
 4. Prüfen von **außerhalb** des Heimnetzes: `https://<Adresse>/<slug>/newsletter/einstellungen` antwortet, `https://<Adresse>/health` und `https://<Adresse>/betreiber` antworten mit 404.
