@@ -73,13 +73,15 @@ def cache_leeren() -> None:
 # Betreiber-Aufrufe brauchen dort keine Anmeldung, werden aber nur beantwortet, wenn ALLE Bedingungen erfüllt sind (sonst 403, fail closed):
 # (a) die Verbindung kommt direkt von einer Loopback- oder privaten Adresse (REMOTE_ADDR, nie X-Forwarded-For),
 # (b) die Anfrage trägt keinen Proxy-Kopf (ein Tunnel/Proxy auf dem Pi selbst erscheint sonst als Loopback),
-# (c) der Host-Kopf ist die Pi-Adresse oder localhost (stoppt DNS-Rebinding); ändernde Aufrufe mit Origin-Kopf nur vom selben Host (stoppt fremde Webseiten im
+# (c) der Host-Kopf ist eine der Pi-Adressen (MAILNEXT_PI_ADRESSE, Komma-Liste: LAN-IP, Tailscale-IP, MagicDNS-Name) oder localhost (stoppt DNS-Rebinding); ändernde Aufrufe mit Origin-Kopf nur vom selben Host (stoppt fremde Webseiten im
 #     Browser des Heimnetzes),
 # (d) die Anfrage kam nicht auf dem öffentlichen Port (das erledigt app.py: dort gibt es keine Betreiber-Pfade).
 PROXY_KOEPFE = ("X-Forwarded-For", "X-Forwarded-Host", "X-Forwarded-Proto", "X-Forwarded-Port", "Forwarded", "X-Real-IP", "X-Client-IP",
                 "CF-Connecting-IP", "True-Client-IP", "Fastly-Client-IP", "Via")
 LOKALE_NAMEN = ("localhost", "127.0.0.1", "[::1]", "::1")
-_PRIVAT = tuple(ipaddress.ip_network(n) for n in ("127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "::1/128", "fc00::/7"))
+# Quellnetze im Offen-Modus: Loopback, private Netze und Tailscale (100.64.0.0/10 CGNAT, fd7a:115c:a1e0::/48). Alles andere wird abgelehnt.
+_PRIVAT = tuple(ipaddress.ip_network(n) for n in ("127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "::1/128", "fc00::/7",
+                                                   "100.64.0.0/10", "fd7a:115c:a1e0::/48"))
 
 
 def adresse_privat(adresse: str) -> bool:
@@ -105,9 +107,7 @@ def offen_pruefen() -> str | None:
         return "adresse_nicht_privat"
     if any(request.headers.get(k) for k in PROXY_KOEPFE):
         return "proxy_kopf"
-    erlaubt = set(LOKALE_NAMEN)
-    if config.pi_adresse():
-        erlaubt.add(config.pi_adresse())
+    erlaubt = set(LOKALE_NAMEN) | set(config.pi_adressen())
     if _host_name(request.headers.get("Host", "")) not in erlaubt:
         return "host_unbekannt"
     if request.method not in ("GET", "HEAD", "OPTIONS"):

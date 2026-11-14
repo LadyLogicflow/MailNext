@@ -34,7 +34,14 @@ def hauptschluessel() -> str | None:
 
 def basis_url() -> str:
     """Öffentliche Adresse von MailNext (für Links in Mails). Je Mandant überschreibbar (design.basis_url)."""
-    return os.environ.get("MAILNEXT_BASIS_URL", "https://mailnext.bst-next.de").rstrip("/")
+    wert = os.environ.get("MAILNEXT_BASIS_URL", "").strip()
+    if wert:
+        return wert.rstrip("/")
+    # Pi-Testinstanz ohne ausdrückliche Adresse: erste Pi-Adresse und öffentlicher Port am Pi (die Compose reicht beides durch)
+    port = os.environ.get("MAILNEXT_PORT_OEFFENTLICH", "").strip()
+    if port.isdigit() and pi_adresse():
+        return "http://%s:%s" % (pi_adresse(), port)
+    return "https://mailnext.bst-next.de"
 
 
 def proxy_anzahl() -> int:
@@ -61,9 +68,25 @@ def betreiber_offen_email() -> str:
     return os.environ.get("MAILNEXT_BETREIBER_OFFEN_EMAIL", "").strip().lower()
 
 
+def pi_adressen() -> list:
+    """Adressen und Namen, unter denen die Testinstanz erreicht wird (Host-Prüfung im Offen-Modus): MAILNEXT_PI_ADRESSE, Komma-Liste, ohne Port
+    (ein trotzdem angehängter Port wird entfernt). Beispiel: 192.168.1.50,100.101.102.103,pi5,pi5.beispiel.ts.net"""
+    ergebnis = []
+    for teil in os.environ.get("MAILNEXT_PI_ADRESSE", "").split(","):
+        name = teil.strip().lower()
+        if name.startswith("["):                                                        # [::1]
+            name = name.split("]", 1)[0] + "]"
+        elif name.count(":") == 1:                                                       # name:port
+            name = name.split(":", 1)[0]
+        if name and name not in ergebnis:
+            ergebnis.append(name)
+    return ergebnis
+
+
 def pi_adresse() -> str:
-    """Adresse oder Name, unter der die Testinstanz im Heimnetz erreicht wird (Host-Prüfung im Offen-Modus)."""
-    return os.environ.get("MAILNEXT_PI_ADRESSE", "").strip().lower()
+    """Die erste Pi-Adresse (für Links), leer wenn keine gesetzt ist."""
+    liste = pi_adressen()
+    return liste[0] if liste else ""
 
 
 def oeffentlicher_port() -> str | None:

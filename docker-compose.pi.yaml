@@ -2,7 +2,8 @@
 #
 # Pflicht in der Datei .env neben dieser Datei (Vorlage: pi.env.beispiel; die Datei .env nie weitergeben oder einchecken):
 #   MAILNEXT_HAUPTSCHLUESSEL   mindestens 32 Zeichen, zufällig
-#   MAILNEXT_PI_ADRESSE        Adresse oder Name des Pi im Heimnetz (z. B. 192.168.1.50), unter der die Testinstanz erreicht wird
+#   MAILNEXT_PI_ADRESSE        Adresse(n) oder Name(n) des Pi, unter denen die Testinstanz erreicht wird, ohne Port, bei mehreren mit Komma
+#                              (z. B. 192.168.1.50,100.101.102.103,pi5). Die erste wird für Links in Mails benutzt.
 # Optional (siehe PI-TESTINSTANZ.md):
 #   MAILNEXT_PORT_INTERN, MAILNEXT_PORT_OEFFENTLICH   Ports AM PI (Standard 8000 und 8001), falls sie dort belegt sind; im Container bleiben sie 8000 und 8001
 #   MAILNEXT_BETREIBER_AUTH    "offen" schaltet die Betreiber-Oberfläche OHNE Anmeldung frei (nur von privaten Adressen); Standard "portal"
@@ -21,7 +22,8 @@ services:
     environment:
       MAILNEXT_HAUPTSCHLUESSEL: "${MAILNEXT_HAUPTSCHLUESSEL:?MAILNEXT_HAUPTSCHLUESSEL fehlt (.env)}"
       MAILNEXT_PI_ADRESSE: "${MAILNEXT_PI_ADRESSE:?MAILNEXT_PI_ADRESSE fehlt (.env)}"
-      MAILNEXT_BASIS_URL: "${MAILNEXT_BASIS_URL:-http://${MAILNEXT_PI_ADRESSE}:${MAILNEXT_PORT_OEFFENTLICH:-8001}}"
+      MAILNEXT_BASIS_URL: "${MAILNEXT_BASIS_URL:-}"                                  # leer: http://<erste Pi-Adresse>:<öffentlicher Port am Pi> (der Dienst bildet sie selbst)
+      MAILNEXT_PORT_OEFFENTLICH: "${MAILNEXT_PORT_OEFFENTLICH:-8001}"                 # nur für diese Ableitung; im Container lauscht der öffentliche Port immer auf 8001
       MAILNEXT_DATEN: "/data"
       MAILNEXT_PROXIES: "${MAILNEXT_PROXIES:-0}"
       MAILNEXT_OEFFENTLICHER_PORT: "8001"

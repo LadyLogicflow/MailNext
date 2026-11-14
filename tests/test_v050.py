@@ -139,6 +139,53 @@ class OffenModusTests(OffenBasis):
                 create_app(os.path.join(self.verz.name, "w2.db"))
 
 
+class TailscaleTests(OffenBasis):
+    """v0.5.2: Zugriff über Tailscale (catrin erreicht den Pi nur so). Quellnetze 100.64.0.0/10 und fd7a:115c:a1e0::/48, mehrere Pi-Adressen."""
+
+    def test_tailscale_quelladressen_gelten_gleich_daneben_nicht(self):
+        for von in ("100.64.0.1", "100.101.102.103", "100.127.255.254", "fd7a:115c:a1e0::1", "fd7a:115c:a1e0:ab12:1234::7", "::ffff:100.101.102.103"):
+            self.assertEqual(self.get(von=von).status_code, 200, von)
+        for von in ("100.63.255.255", "100.128.0.1", "100.0.0.1", "2a01:4f8::1", "fe80::1"):
+            self.assertEqual(self.get(von=von).status_code, 403, von)
+        # IPv6: Tailscale nutzt fd7a:115c:a1e0::/48 aus dem privaten Bereich fc00::/7, der schon vorher galt; andere fd..-Adressen sind ebenfalls privat
+        self.assertEqual(self.get(von="fd7a:115c:a1e1::1").status_code, 200)
+
+    def test_proxy_kopf_ueber_tailscale_wird_weiter_abgelehnt(self):
+        # z. B. "tailscale serve": die Anfrage kommt von 100.x, trägt aber Proxy-Köpfe
+        self.assertEqual(self.get(von="100.101.102.103", headers={"X-Forwarded-For": "100.64.0.9"}).status_code, 403)
+        self.assertEqual(self.get(von="127.0.0.1", headers={"X-Forwarded-Proto": "https"}).status_code, 403)
+
+    def test_mehrere_pi_adressen_jede_gilt(self):
+        liste = "192.168.1.50, 100.101.102.103 ,pi5,Pi5.Beispiel.TS.net:8200,,"
+        with mock.patch.dict(os.environ, {"MAILNEXT_PI_ADRESSE": liste}):
+            self.assertEqual(config.pi_adressen(), ["192.168.1.50", "100.101.102.103", "pi5", "pi5.beispiel.ts.net"])
+            for host in ("192.168.1.50:8200", "100.101.102.103:8200", "100.101.102.103", "pi5:8200", "PI5", "pi5.beispiel.ts.net:8200", "localhost:8200"):
+                self.assertEqual(self.get(von="100.101.102.103", host=host).status_code, 200, host)
+            for host in ("pi6:8200", "100.101.102.104:8200", "beispiel.ts.net", "boese.example", "pi5.beispiel.ts.net.boese.example"):
+                self.assertEqual(self.get(von="100.101.102.103", host=host).status_code, 403, host)
+        with mock.patch.dict(os.environ, {"MAILNEXT_PI_ADRESSE": ""}):
+            self.assertEqual(config.pi_adressen(), [])
+            self.assertEqual(self.get(von="100.101.102.103", host="pi5").status_code, 403)
+
+    def test_origin_ueber_tailscale_name(self):
+        with mock.patch.dict(os.environ, {"MAILNEXT_PI_ADRESSE": "100.101.102.103,pi5"}):
+            daten = {"slug": "neu-1", "name": "Neu e. V."}
+            self.assertEqual(self.post("/api/v1/betreiber/mandanten", daten, von="100.101.102.103", host="pi5:8200",
+                                       headers={"Origin": "http://pi5:8200"}).status_code, 201)
+            self.assertEqual(self.post("/api/v1/betreiber/mandanten", {"slug": "neu-2", "name": "Z"}, von="100.101.102.103", host="pi5:8200",
+                                       headers={"Origin": "http://boese.example"}).status_code, 403)
+
+    def test_basis_url_aus_erster_adresse_und_oeffentlichem_port(self):
+        with mock.patch.dict(os.environ, {"MAILNEXT_BASIS_URL": "", "MAILNEXT_PI_ADRESSE": "100.101.102.103,pi5", "MAILNEXT_PORT_OEFFENTLICH": "8201"}):
+            self.assertEqual(config.basis_url(), "http://100.101.102.103:8201")
+        with mock.patch.dict(os.environ, {"MAILNEXT_BASIS_URL": "https://news.beispiel.de/", "MAILNEXT_PI_ADRESSE": "100.101.102.103", "MAILNEXT_PORT_OEFFENTLICH": "8201"}):
+            self.assertEqual(config.basis_url(), "https://news.beispiel.de")                  # ausdrückliche Adresse gewinnt
+        with mock.patch.dict(os.environ, {"MAILNEXT_BASIS_URL": "", "MAILNEXT_PI_ADRESSE": "", "MAILNEXT_PORT_OEFFENTLICH": ""}):
+            self.assertEqual(config.basis_url(), "https://mailnext.bst-next.de")               # Produktion ohne Angaben unverändert
+        with mock.patch.dict(os.environ, {"MAILNEXT_BASIS_URL": "", "MAILNEXT_PI_ADRESSE": "pi5", "MAILNEXT_PORT_OEFFENTLICH": "abc"}):
+            self.assertEqual(config.basis_url(), "https://mailnext.bst-next.de")
+
+
 class PortTrennungTests(OffenBasis):
     def setUp(self):
         super().setUp()
@@ -457,9 +504,11 @@ class AuslieferungTests(unittest.TestCase):
         fehlt = sorted(n for n in gelesen - ausgenommen if not re.search(r"^\s+%s:" % n, c, re.M))
         self.assertEqual(fehlt, [], "in der Pi-Compose nicht durchgereicht")
 
-    def test_basis_url_standard_folgt_dem_oeffentlichen_port(self):
+    def test_basis_url_wird_im_dienst_abgeleitet(self):
+        """Mit einer Liste von Pi-Adressen ließe sich die Basis-URL in der Compose nicht zerlegen; der Dienst bildet sie aus der ersten Adresse und dem Port."""
         c = self.lesen("docker-compose.pi.yaml")
-        self.assertIn('MAILNEXT_BASIS_URL: "${MAILNEXT_BASIS_URL:-http://${MAILNEXT_PI_ADRESSE}:${MAILNEXT_PORT_OEFFENTLICH:-8001}}"', c)
+        self.assertIn('MAILNEXT_BASIS_URL: "${MAILNEXT_BASIS_URL:-}"', c)
+        self.assertIn('MAILNEXT_PORT_OEFFENTLICH: "${MAILNEXT_PORT_OEFFENTLICH:-8001}"', c)
         self.assertIn('MAILNEXT_PI_ADRESSE: "${MAILNEXT_PI_ADRESSE:?', c)                # Pflicht, kommt mit klarer Meldung
 
     def test_jede_compose_variable_steht_in_der_vorlage(self):
@@ -474,7 +523,7 @@ class AuslieferungTests(unittest.TestCase):
     def test_anleitung_nennt_die_regeln(self):
         a = self.lesen("PI-TESTINSTANZ.md")
         for text in ("Nach außen darf nur der öffentliche Port", "MAILNEXT_BETREIBER_AUTH=offen", "pflichtangaben_fehlen", "Port 8000 nie ins Internet", "SPF", "versand-rate",
-                     "MAILNEXT_PORT_INTERN", "MAILNEXT_PORT_OEFFENTLICH"):
+                     "MAILNEXT_PORT_INTERN", "MAILNEXT_PORT_OEFFENTLICH", "Tailscale", "100.64.0.0/10", "fd7a:115c:a1e0::/48"):
             self.assertIn(text, a, text)
 
 
