@@ -186,6 +186,54 @@ class TailscaleTests(OffenBasis):
             self.assertEqual(config.basis_url(), "https://mailnext.bst-next.de")
 
 
+class UiAuslieferungTests(OffenBasis):
+    """v0.5.3: Die Betreiber-Seite lädt betreiber.css/.js relativ. Unter /betreiber (ohne Schrägstrich) ergab das /betreiber.css und /betreiber.js (404) und eine leere Seite."""
+
+    def test_ohne_schraegstrich_wird_umgeleitet_query_bleibt(self):
+        r = self.get("/betreiber", host="100.100.178.117:8200", von="100.101.102.103")
+        self.assertEqual(r.status_code, 308)
+        self.assertEqual(r.headers["Location"], "/betreiber/")                                  # relativ: stört Proxys/Tunnel mit anderem Host nicht
+        r = self.get("/betreiber?mandant=3&x=ä", host="100.100.178.117:8200", von="100.101.102.103")
+        self.assertEqual((r.status_code, r.headers["Location"].split("?")[0]), (308, "/betreiber/"))
+        self.assertIn("mandant=3", r.headers["Location"])
+
+    def test_kein_offener_redirect_ueber_die_query(self):
+        for abfrage in ("//boese.example", "https://boese.example", "/\\boese.example", "@boese.example"):
+            r = self.get("/betreiber?" + abfrage)
+            self.assertTrue(r.headers["Location"].startswith("/betreiber/?"), abfrage)           # Ziel ist immer der feste Pfad, die Query hängt nur dahinter
+
+    def test_die_seite_laedt_ihre_dateien_nur_unter_dem_schraegstrich(self):
+        import re
+        from urllib.parse import urljoin
+        html = self.get("/betreiber/").get_data(as_text=True)
+        relativ = re.findall(r'(?:href|src)="([^"/][^"]*)"', html)
+        self.assertIn("betreiber.css", relativ)
+        self.assertIn("betreiber.js", relativ)
+        for datei in relativ:
+            self.assertEqual(self.get(urljoin("/betreiber/", datei)).status_code, 200, datei)       # unter /betreiber/ gefunden
+            self.assertEqual(self.get(urljoin("/betreiber", datei)).status_code, 404, datei)         # so sah es unter /betreiber aus: leere Seite
+
+    def test_ganzer_weg_wie_im_browser_ueber_tailscale(self):
+        von, host = "100.101.102.103", "100.100.178.117:8200"
+        with mock.patch.dict(os.environ, {"MAILNEXT_PI_ADRESSE": "127.0.0.1,100.100.178.117"}):
+            r = self.get("/betreiber", host=host, von=von)
+            self.assertEqual(r.status_code, 308)
+            seite = self.get(r.headers["Location"], host=host, von=von)
+            self.assertEqual(seite.status_code, 200)
+            self.assertIn("text/html", seite.headers["Content-Type"])
+            self.assertIn("script-src 'self'", seite.headers["Content-Security-Policy"])
+            for datei, typ in (("betreiber.css", "text/css"), ("betreiber.js", "javascript")):
+                a = self.get("/betreiber/" + datei, host=host, von=von)
+                self.assertEqual(a.status_code, 200, datei)
+                self.assertIn(typ, a.headers["Content-Type"])
+            self.assertEqual(self.get("/api/v1/betreiber/mandanten", host=host, von=von).status_code, 200)       # das Skript lädt beim Start nur diese Liste
+
+    def test_auf_dem_oeffentlichen_port_bleibt_alles_404(self):
+        with mock.patch.dict(os.environ, {"MAILNEXT_OEFFENTLICHER_PORT": "8001"}):
+            for pfad in ("/betreiber", "/betreiber/", "/betreiber/betreiber.js"):
+                self.assertEqual(self.get(pfad, port="8001").status_code, 404, pfad)
+
+
 class PortTrennungTests(OffenBasis):
     def setUp(self):
         super().setUp()
@@ -523,7 +571,7 @@ class AuslieferungTests(unittest.TestCase):
     def test_anleitung_nennt_die_regeln(self):
         a = self.lesen("PI-TESTINSTANZ.md")
         for text in ("Nach außen darf nur der öffentliche Port", "MAILNEXT_BETREIBER_AUTH=offen", "pflichtangaben_fehlen", "Port 8000 nie ins Internet", "SPF", "versand-rate",
-                     "MAILNEXT_PORT_INTERN", "MAILNEXT_PORT_OEFFENTLICH", "Tailscale", "100.64.0.0/10", "fd7a:115c:a1e0::/48"):
+                     "MAILNEXT_PORT_INTERN", "MAILNEXT_PORT_OEFFENTLICH", "/betreiber/", "Tailscale", "100.64.0.0/10", "fd7a:115c:a1e0::/48"):
             self.assertIn(text, a, text)
 
 

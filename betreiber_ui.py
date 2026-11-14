@@ -5,7 +5,7 @@ Ressourcen (CSP 'self'), nicht einbettbar, nicht cachebar. Nur flache Dateinamen
 import re
 from pathlib import Path
 
-from flask import Blueprint, Response, abort, send_from_directory
+from flask import Blueprint, Response, abort, request, send_from_directory
 
 bp = Blueprint("betreiber_ui", __name__)
 ORDNER = Path(__file__).resolve().parent / "ui" / "betreiber"
@@ -27,6 +27,13 @@ def _mit_kopf(antwort: Response) -> Response:
 
 
 @bp.get("/betreiber")
+def start_ohne_schraegstrich():
+    """index.html lädt betreiber.css und betreiber.js RELATIV. Unter /betreiber (ohne Schrägstrich) würde der Browser daraus /betreiber.css und /betreiber.js machen (404,
+    leere Seite). Darum immer auf /betreiber/ umleiten: fester Pfad, Query bleibt, relativer Location-Kopf (stört Proxys und Tunnel mit anderem Host nicht)."""
+    abfrage = request.query_string.decode("utf-8", "replace")
+    return Response(status=308, headers={"Location": "/betreiber/" + ("?" + abfrage if abfrage else ""), "Cache-Control": "no-store"})
+
+
 @bp.get("/betreiber/")
 def start():
     if not (ORDNER / "index.html").is_file():

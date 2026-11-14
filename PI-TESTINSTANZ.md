@@ -19,7 +19,7 @@ Beim Echtversand gehen echte Mails an echte Menschen. Vorher die Checkliste unte
 ## Die zwei Ports
 | Port | Wer darf hin | Was wird beantwortet |
 |---|---|---|
-| **8000** (intern) | nur das Heimnetz | alles: Betreiber-Oberfläche (`/betreiber`), Betreiber-Schnittstelle, `/health`, öffentliche Seiten |
+| **8000** (intern) | nur das Heimnetz | alles: Betreiber-Oberfläche (`/betreiber/`), Betreiber-Schnittstelle, `/health`, öffentliche Seiten |
 | **8001** (öffentlich) | darf per Tunnel oder Reverse Proxy nach außen | **nur** die öffentlichen Newsletter-Seiten: Anmelden, Bestätigen, Abmelden, Einstellungen, One-Click-Abmeldung. Alles andere (auch `/health`, `/betreiber`, `/api/v1/…`) antwortet dort mit 404. |
 
 Die Trennung entscheidet der Port der Verbindung **im Container** (8000/8001), nicht der Host-Kopf, den ein Absender frei wählen kann, und nicht der Port am Pi. **Nach außen darf nur der öffentliche Port (8001) gezeigt werden, nie der interne (8000).**
@@ -34,7 +34,7 @@ Empfänger brauchen eine öffentlich erreichbare **https**-Adresse für Bestäti
 4. Prüfen von **außerhalb** des Heimnetzes: `https://<Adresse>/<slug>/newsletter/einstellungen` antwortet, `https://<Adresse>/health` und `https://<Adresse>/betreiber` antworten mit 404.
 
 ## Betreiber-Oberfläche ohne Anmeldung („Offen-Modus“)
-Die Oberfläche (`http://<Pi-Adresse>:8000/betreiber`) verlangt sonst die Portal-Anmeldung, die es im Heimnetz nicht gibt. Für die Testinstanz gibt es den **Offen-Modus**, der Anmeldung durch Netzschutz ersetzt:
+Die Oberfläche (`http://<Pi-Adresse>:8000/betreiber/`, ein Aufruf ohne Schrägstrich am Ende wird dorthin umgeleitet) verlangt sonst die Portal-Anmeldung, die es im Heimnetz nicht gibt. Für die Testinstanz gibt es den **Offen-Modus**, der Anmeldung durch Netzschutz ersetzt:
 - Einschalten in `.env`: `MAILNEXT_BETREIBER_AUTH=offen` (Standard `portal`, jeder andere Wert gilt als `portal`). Optional `MAILNEXT_BETREIBER_OFFEN_EMAIL=<Adresse>`: Sie steht als Akteur im Audit-Log und ist der Standard-Empfänger der Testmail.
 - Betreiberaufrufe werden **nur** beantwortet, wenn alles zutrifft, sonst 403: die Verbindung kommt direkt von einer privaten Adresse (Loopback, 10.x, 172.16–31.x, 192.168.x, Tailscale 100.64.0.0/10 und fd7a:115c:a1e0::/48), die Anfrage trägt **keinen** Proxy-Kopf (`X-Forwarded-For`, `Forwarded`, `X-Real-IP`, `CF-Connecting-IP` …), der Host-Kopf ist eine der Adressen aus `MAILNEXT_PI_ADRESSE` oder localhost, und ändernde Aufrufe mit Origin-Kopf kommen vom selben Host (stoppt fremde Webseiten im Browser des Heimnetzes). Auf Port 8001 gibt es keine Betreiberpfade.
 - Beim Start steht eine deutliche WARNUNG im Log, und `/health` zeigt `"betreiber_offen": true`.
@@ -44,7 +44,7 @@ Die Oberfläche (`http://<Pi-Adresse>:8000/betreiber`) verlangt sonst die Portal
 ## Zugriff über Tailscale
 Wird der Pi nur über Tailscale erreicht (Verbindung von 100.x.y.z), gilt im Offen-Modus zusätzlich: Quelladressen aus `100.64.0.0/10` (IPv4) und `fd7a:115c:a1e0::/48` (IPv6) sind erlaubt, alles andere außerhalb von Loopback und privaten Netzen bleibt 403.
 - In `.env` **alle** Adressen eintragen, unter denen der Browser den Pi anspricht, mit Komma, ohne Port: `MAILNEXT_PI_ADRESSE=100.101.102.103,pi5,pi5.dein-tailnet.ts.net` (Tailscale-IP, kurzer Name, MagicDNS-Name; auch die LAN-Adresse, wenn sie benutzt wird). Der Host-Kopf der Anfrage muss zu einem Eintrag passen. Die erste Adresse bildet die Links in den Mails, solange `MAILNEXT_BASIS_URL` leer ist.
-- Neu starten: `docker compose -f docker-compose.pi.yaml up -d`. Aufruf: `http://<Tailscale-IP>:<interner Port>/betreiber`.
+- Neu starten: `docker compose -f docker-compose.pi.yaml up -d`. Aufruf: `http://<Tailscale-IP>:<interner Port>/betreiber/`.
 - **Nicht** `tailscale serve` oder `tailscale funnel` vor den internen Port setzen: Serve schickt Proxy-Köpfe mit, der Offen-Modus lehnt solche Anfragen ab (403, gewollt); Funnel würde den Dienst ins Internet stellen.
 - Hinweis: `100.64.0.0/10` ist der gemeinsame Adressbereich für Carrier-Grade-NAT, nicht nur für Tailscale. Im Heimnetz ohne Tailscale diesen Bereich nicht benutzen.
 

@@ -19,7 +19,9 @@ class UiTests(unittest.TestCase):
         self.verz.cleanup()
 
     def test_startseite_und_kopfzeilen(self):
-        for pfad in ("/betreiber", "/betreiber/", "/betreiber/index.html"):
+        r = self.c.get("/betreiber")                                                   # ohne Schrägstrich würden die relativen CSS/JS-Adressen ins Leere zeigen: Umleitung
+        self.assertEqual((r.status_code, r.headers["Location"]), (308, "/betreiber/"))
+        for pfad in ("/betreiber/", "/betreiber/index.html"):
             r = self.c.get(pfad)
             self.assertEqual(r.status_code, 200, pfad)
             self.assertIn("default-src 'self'", r.headers["Content-Security-Policy"])
