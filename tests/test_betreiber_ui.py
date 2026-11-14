@@ -77,6 +77,30 @@ class UiTests(unittest.TestCase):
         import hashlib
         self.assertTrue(hashlib.md5(r.get_data()).hexdigest().startswith("33e9e6d674e3"))                      # unverändert das gültige Logo (Prüfsumme von Docky)
 
+    # ----- Farbfelder und Aktiv-Haken (Weby 6db452f, catrin #18720 Safari) -----
+
+    def test_css_farbfeld_und_haken_haben_eigene_regeln(self):
+        """Die allgemeine Eingabefeld-Regel (volle Breite, Innenabstand) machte im Safari aus dem Farbfeld eine leere Fläche und aus dem Haken ein breites Feld."""
+        import re
+        css = self.c.get("/betreiber/betreiber.css").get_data(as_text=True)
+        farbe = re.search(r'\.form-group input\[type="color"\]\s*\{([^}]*)\}', css)
+        self.assertIsNotNone(farbe)
+        self.assertRegex(farbe.group(1), r"width:\s*4rem")
+        self.assertRegex(farbe.group(1), r"padding:\s*0\b")
+        haken = re.search(r'\.form-group\.checkbox-inline input\[type="checkbox"\]\s*\{([^}]*)\}', css)
+        self.assertIsNotNone(haken)
+        self.assertRegex(haken.group(1), r"width:\s*auto")
+
+    def test_js_fuellt_farbfelder_haken_und_hex_text(self):
+        js = self.c.get("/betreiber/betreiber.js").get_data(as_text=True)
+        self.assertIn("input.value = m.design[f] || '#000000';", js)
+        self.assertIn("hexDisplay.textContent = m.design[f] || '#000000';", js)
+        self.assertIn("hexDisplay.textContent = input.value;", js)                           # live
+        self.assertIn("aktivCheckbox.checked = m.aktiv;", js)
+        self.assertIn("aktivGroup.className = 'form-group checkbox-inline';", js)
+        self.assertIn("farbe_primaer: 'Primärfarbe'", js)
+        self.assertIn("hint.textContent = '#rrggbb';", js)
+
     def test_dateinamen_regel(self):
         for gut in ("index.html", "app.js", "stil.css", "logo.svg"):
             self.assertTrue(betreiber_ui.DATEINAME.match(gut), gut)

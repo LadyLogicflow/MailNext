@@ -36,6 +36,32 @@ async function main() {
   out.tabs = [...doc.querySelectorAll('button')].map(b => b.textContent.trim());
   const toastText = () => doc.getElementById('toast').textContent;
   const sichtbarFehler = () => [...doc.querySelectorAll('.error:not(.hidden),.field-error:not(.hidden)')].map(e => e.textContent);
+  if (arg.szenario === 'farben') {
+    const ids = ['farbe_primaer', 'farbe_akzent', 'farbe_hintergrund', 'farbe_text'];
+    const lies = () => ({
+      typen: ids.map(f => doc.getElementById('edit-' + f).type),
+      werte: ids.map(f => doc.getElementById('edit-' + f).value),
+      hex_text: [...doc.querySelectorAll('.color-hex-display')].map(e => e.textContent),
+      hinweise: [...doc.querySelectorAll('.color-input-wrapper small')].map(e => e.textContent),
+      aktiv: doc.getElementById('edit-aktiv').checked,
+      beschriftungen: [...doc.querySelectorAll('#details-form label')].map(l => l.textContent.trim()).filter(t => t),
+      titel: doc.title, kopf: doc.querySelector('header h1') ? doc.querySelector('header h1').textContent : null,
+      logo: doc.querySelector('header img.header-logo') ? doc.querySelector('header img.header-logo').getAttribute('src') : null,
+    });
+    out.vorher = lies();
+    for (const [f, wert] of Object.entries(arg.neu || {})) {
+      const el = doc.getElementById('edit-' + f); el.value = wert; el.dispatchEvent(new win.Event('input', {bubbles: true}));
+    }
+    out.live = lies();
+    const vor = requests.length;
+    doc.getElementById('details-form').dispatchEvent(new win.Event('submit', {bubbles: true, cancelable: true}));
+    await sleep(1500);
+    out.requests = requests.slice(vor).map(r => r.m + ' ' + r.p + ' ' + r.s);
+    out.put_farben = (requests.slice(vor).find(r => r.m === 'PUT') || {body: {design: {}}}).body.design;
+    out.toast = toastText();
+    await klick(arg.mandant_name);
+    out.nachher = lies();
+  }
   if (arg.szenario === 'abonnenten') {
     await klick('Abonnenten');
     out.kopf = [...doc.querySelectorAll('th')].map(t => t.textContent);

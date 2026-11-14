@@ -387,6 +387,43 @@ class TestKI(TestEditor):
 for _n in [n for n in vars(TestEditor) if n.startswith("test_")]:                  # TestKI erbt nur die Hilfen von TestEditor, nicht dessen Tests
     setattr(TestKI, _n, None)
 
+class TestFarben(MN):
+    """catrin #18720 (Safari): Farbfelder und Aktiv-Haken müssen gefüllt erscheinen, der Hex-Wert daneben folgt live, Speichern schickt die Werte, Neuladen zeigt sie."""
+    NEU = {"farbe_primaer": "#003599", "farbe_akzent": "#ff8800", "farbe_hintergrund": "#ffffff", "farbe_text": "#111111"}
+
+    def test_formular_fuellung_live_anzeige_speichern_und_neu_oeffnen(self):
+        self.mandant("hilo", "HILO e. V.")
+        o = self.node(szenario="farben", mandant_name="HILO e. V.", neu=self.NEU)
+        standard = ["#1f3a5f", "#a3e635", "#f4f6f8", "#1f2933"]
+        v = o["vorher"]
+        self.assertEqual(v["typen"], ["color"] * 4)
+        self.assertEqual(v["werte"], standard)                                                  # Farbfelder zeigen den gespeicherten Wert (#rrggbb)
+        self.assertEqual(v["hex_text"], standard)                                               # Hex-Text daneben
+        self.assertEqual(v["hinweise"], ["#rrggbb"] * 4)                                        # Formathinweis
+        self.assertTrue(v["aktiv"])                                                             # Haken kommt aus m.aktiv
+        self.assertEqual([b for b in v["beschriftungen"] if b in ("Primärfarbe", "Akzentfarbe", "Hintergrund", "Text", "Aktiv")], ["Aktiv", "Primärfarbe", "Akzentfarbe", "Hintergrund", "Text"])
+        self.assertEqual(o["live"]["hex_text"], list(self.NEU.values()))                       # Hex-Text aktualisiert sich live
+        self.assertEqual(o["live"]["werte"], list(self.NEU.values()))
+        self.assertEqual(o["put_farben"], self.NEU | {k: o["put_farben"][k] for k in o["put_farben"] if k not in self.NEU})   # Speichern schickt die Werte
+        for k, w in self.NEU.items():
+            self.assertEqual(o["put_farben"][k], w)
+        self.assertEqual(o["toast"], "Änderungen gespeichert")
+        self.assertTrue(any(r.startswith("PUT ") and r.endswith(" 200") for r in o["requests"]), o["requests"])
+        self.assertEqual(o["nachher"]["werte"], list(self.NEU.values()))                       # nach dem erneuten Öffnen stehen die gespeicherten Werte da
+        self.assertEqual(o["nachher"]["hex_text"], list(self.NEU.values()))
+        self.assertTrue(o["nachher"]["aktiv"])
+
+    def test_inaktiver_mandant_zeigt_den_haken_aus_und_aktiver_an(self):
+        m = self.mandant("hilo", "HILO e. V.")
+        import mandanten
+        mandanten.aendern(m["id"], aktiv=False)
+        self.assertFalse(self.node(szenario="farben", mandant_name="HILO e. V.", neu={})["vorher"]["aktiv"])
+
+    def test_kopf_ohne_betreiber_mit_logo(self):
+        self.mandant("hilo", "HILO e. V.")
+        v = self.node(szenario="farben", mandant_name="HILO e. V.", neu={})["vorher"]
+        self.assertEqual((v["titel"], v["kopf"], v["logo"]), ("MailNext", "MailNext", "bstnext-logo-white.svg"))
+
 
 if __name__ == "__main__":
     unittest.main()
