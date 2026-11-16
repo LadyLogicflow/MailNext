@@ -688,22 +688,26 @@ class TestBilder(MN):
 
     def test_409_bild_in_verwendung_zeigt_meldung(self):
         """409 bei Löschen eines als Logo verwendeten Bilds zeigt Server-Meldung (betreiber.js apiCall)."""
-        import bilder, mandanten
-        from tests.test_etappe1 import png
         m = self.mandant("hilo", "HILO e. V.")
-        # Echtes Bild hochladen und als Logo setzen
-        bild_id = bilder.hochladen(m, png(groesse=(100, 100)), "Logo")["id"]
-        mandanten.aendern(m["id"], design={"logo_bild_id": bild_id})
+        # Bild direkt in DB einfügen und als Logo setzen
+        with db.verbindung() as c:
+            c.execute("INSERT INTO bild (mandant_id, token, endung, content_type, breite, hoehe, groesse, sha256, alt, erstellt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))",
+                     (m["id"], "test123", "png", "image/png", 100, 100, 1000, "a"*64, "Logo"))
+            bild_id = c.lastrowid
+            c.execute("UPDATE mandant SET design = json_patch(design, ?) WHERE id = ?",
+                     (json.dumps({"logo_bild_id": bild_id}), m["id"]))
         # Löschen -> 409
         o = self.node(szenario="bilder", mandant_name="HILO e. V.", ops=[{"op": "loeschen", "bild_id": bild_id}])
         self.assertIn("verwendet", o["schritte"][0]["zustand"]["toast"].lower(), "409-Meldung 'wird verwendet' muss im Toast erscheinen")
 
     def test_logo_bild_id_als_zahl_oder_null_im_put(self):
         """PUT /mandanten sendet logo_bild_id als number (parseInt) oder null (betreiber.js:768)."""
-        import bilder
-        from tests.test_etappe1 import png
         m = self.mandant("hilo", "HILO e. V.")
-        bild_id = bilder.hochladen(m, png(groesse=(80, 80)), "Test")["id"]
+        # Bild direkt in DB einfügen
+        with db.verbindung() as c:
+            c.execute("INSERT INTO bild (mandant_id, token, endung, content_type, breite, hoehe, groesse, sha256, alt, erstellt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))",
+                     (m["id"], "test456", "png", "image/png", 80, 80, 800, "b"*64, "Test"))
+            bild_id = c.lastrowid
         # Zum Mandanten-Tab wechseln und logo_bild_id setzen
         o = self.node(szenario="bilder", mandant_name="HILO e. V.", ops=[], check_mandant=True, mandant_speichern={"logo_bild_id": str(bild_id)})
         self.assertIsNotNone(o.get("mandant"), "mandant-Daten müssen vorhanden sein")
