@@ -666,8 +666,6 @@ class TestFarben(MN):
         self.assertEqual((v["titel"], v["kopf"], v["logo"]), ("MailNext", "MailNext", "bstnext-logo-white.svg"))
 
 
-
-
 class TestBilder(MN):
     """Newsletter-Layout Etappe 1 (Weby): Bilder-Verwaltung jsdom-Tests (#19041)."""
 
@@ -684,18 +682,17 @@ class TestBilder(MN):
 
     def test_groesse_ueber_5mb_client_seitig_blockiert(self):
         """Datei >5 MB: change-Handler zeigt Toast, leert Input (betreiber.js:2953-2958)."""
-        self.mandant("hilo", "HILO e. V.")
+        self.mandant("HILO e. V.")
         o = self.node(szenario="bilder", mandant_name="HILO e. V.", ops=[{"op": "tippen_alt", "wert": "X"}, {"op": "datei_waehlen", "name": "huge.png", "size": 6*1024*1024}])
         self.assertIn("5 MB", o["schritte"][1]["zustand"]["toast"], "Größe >5MB muss Toast 'zu groß (maximal 5 MB)' zeigen")
 
     def test_409_bild_in_verwendung_zeigt_meldung(self):
         """409 bei Löschen eines als Logo verwendeten Bilds zeigt Server-Meldung (betreiber.js apiCall)."""
-        import bilder
+        import bilder, mandanten
         from tests.test_etappe1 import png
         m = self.mandant("hilo", "HILO e. V.")
         # Echtes Bild hochladen und als Logo setzen
         bild_id = bilder.hochladen(m, png(groesse=(100, 100)), "Logo")["id"]
-        import mandanten
         mandanten.aendern(m["id"], design={"logo_bild_id": bild_id})
         # Löschen -> 409
         o = self.node(szenario="bilder", mandant_name="HILO e. V.", ops=[{"op": "loeschen", "bild_id": bild_id}])
@@ -707,8 +704,10 @@ class TestBilder(MN):
         from tests.test_etappe1 import png
         m = self.mandant("hilo", "HILO e. V.")
         bild_id = bilder.hochladen(m, png(groesse=(80, 80)), "Test")["id"]
-        # Logo setzen -> number
+        # Zum Mandanten-Tab wechseln und logo_bild_id setzen
         o = self.node(szenario="bilder", mandant_name="HILO e. V.", ops=[], check_mandant=True, mandant_speichern={"logo_bild_id": str(bild_id)})
+        self.assertIsNotNone(o.get("mandant"), "mandant-Daten müssen vorhanden sein")
+        self.assertIsNotNone(o.get("speichern"), "speichern-Daten müssen vorhanden sein")
         self.assertEqual(o["speichern"]["put_design"]["logo_bild_id"], bild_id, "logo_bild_id muss number sein")
         # Logo entfernen -> null
         o = self.node(szenario="bilder", mandant_name="HILO e. V.", ops=[], check_mandant=True, mandant_speichern={"logo_bild_id": ""})
@@ -717,6 +716,18 @@ class TestBilder(MN):
     def test_balken_farbe_leer_bei_primaerfarbe_checkbox(self):
         """balken_farbe: Checkbox 'Primärfarbe verwenden' steuert Farbfeld-Sichtbarkeit und sendet '' (betreiber.js:766)."""
         self.mandant("hilo", "HILO e. V.")
+        # Checkbox aktiv -> Farbfeld unsichtbar, PUT sendet ''
+        o = self.node(szenario="bilder", mandant_name="HILO e. V.", ops=[], check_mandant=True, mandant_speichern={"balken_primaer": True})
+        self.assertIsNotNone(o.get("mandant"), "mandant-Daten müssen vorhanden sein")
+        self.assertTrue(o["mandant"]["balken_primaer_checked"], "Checkbox muss aktiv sein")
+        self.assertFalse(o["mandant"]["balken_farbe_sichtbar"], "Farbfeld muss unsichtbar sein (display:none)")
+        self.assertEqual(o["speichern"]["put_design"]["balken_farbe"], "", "balken_farbe muss '' sein")
+        # Checkbox inaktiv -> Farbfeld sichtbar, PUT sendet Hex
+        o = self.node(szenario="bilder", mandant_name="HILO e. V.", ops=[], check_mandant=True, mandant_speichern={"balken_primaer": False, "balken_farbe": "#ff0000"})
+        self.assertFalse(o["mandant"]["balken_primaer_checked"], "Checkbox muss inaktiv sein")
+        self.assertTrue(o["mandant"]["balken_farbe_sichtbar"], "Farbfeld muss sichtbar sein")
+        self.assertEqual(o["speichern"]["put_design"]["balken_farbe"], "#ff0000", "balken_farbe muss Hex-Wert sein")
+
         # Checkbox aktiv -> Farbfeld unsichtbar, PUT sendet ''
         o = self.node(szenario="bilder", mandant_name="HILO e. V.", ops=[], check_mandant=True, mandant_speichern={"balken_primaer": True})
         self.assertTrue(o["mandant"]["balken_primaer_checked"], "Checkbox muss aktiv sein")
