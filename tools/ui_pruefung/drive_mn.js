@@ -195,6 +195,67 @@ async function main() {
       out.schritte.push({op, requests: requests.slice(vor).map(r => `${r.m} ${r.p} ${r.s} ${r.body ? JSON.stringify(r.body) : ''}`), alerts: alerts.slice(), zustand: sichtbar()});
     }
   }
+  if (arg.szenario === 'testliste') {
+    await klick('Newsletter');
+    await sleep(900);
+    const sicht = (vor) => ({
+      zaehler: doc.getElementById('testliste-counter') ? doc.getElementById('testliste-counter').textContent : null,
+      eintraege: [...doc.querySelectorAll('#testliste-container li span')].map(e => e.textContent),
+      leer_text: [...doc.querySelectorAll('#testliste-container p')].map(e => e.textContent),
+      fehler: doc.getElementById('testliste-error') && !doc.getElementById('testliste-error').classList.contains('hidden') ? doc.getElementById('testliste-error').textContent : null,
+      hinzufuegen_gesperrt: (() => { const b = [...doc.querySelectorAll('#testliste-container button')].find(x => x.textContent.trim() === 'Hinzufügen'); return b ? b.disabled : null; })(),
+      eingabe: doc.getElementById('testliste-email-input') ? doc.getElementById('testliste-email-input').value : null,
+      toast: toastText(),
+      html_elemente_in_liste: doc.querySelectorAll('#testliste-container li *:not(span):not(button)').length,
+      requests: requests.slice(vor).map(r => `${r.m} ${r.p} ${r.s} ${r.body ? JSON.stringify(r.body) : ''}`),
+    });
+    out.start = sicht(requests.length);
+    out.start_requests = requests.filter(r => r.p.endsWith('/testliste')).map(r => `${r.m} ${r.p} ${r.s}`);
+    out.schritte = [];
+    for (const op of arg.ops || []) {
+      const vor = requests.length;
+      const eingabe = doc.getElementById('testliste-email-input');
+      if (op.op === 'tippen') { eingabe.value = op.wert; eingabe.dispatchEvent(new win.Event('input', {bubbles: true})); }
+      if (op.op === 'klick_hinzufuegen') { const b = [...doc.querySelectorAll('#testliste-container button')].find(x => x.textContent.trim() === 'Hinzufügen'); b.disabled = !!op.erzwingen ? false : b.disabled; b.click(); await sleep(900); }
+      if (op.op === 'enter') { eingabe.dispatchEvent(new win.KeyboardEvent('keypress', {key: 'Enter', bubbles: true, cancelable: true})); await sleep(900); }
+      if (op.op === 'loeschen') {
+        const li = [...doc.querySelectorAll('#testliste-container li')].find(x => x.querySelector('span').textContent === op.adresse);
+        if (!li) throw new Error('Eintrag nicht gefunden: ' + op.adresse);
+        [...li.querySelectorAll('button')].find(b => b.textContent.trim() === 'Löschen').click(); await sleep(900);
+      }
+      out.schritte.push({op, zustand: sicht(vor)});
+    }
+  }
+  if (arg.szenario === 'abonnent') {
+    await klick('Abonnenten');
+    await sleep(600);
+    const sicht = (vor) => ({
+      fehler: doc.getElementById('abonnent-error') && !doc.getElementById('abonnent-error').classList.contains('hidden') ? doc.getElementById('abonnent-error').textContent : null,
+      erfolg: doc.getElementById('abonnent-success') && !doc.getElementById('abonnent-success').classList.contains('hidden') ? doc.getElementById('abonnent-success').textContent : null,
+      toast: toastText(),
+      email: doc.getElementById('abonnent-email') ? doc.getElementById('abonnent-email').value : null,
+      quelle: doc.getElementById('abonnent-quelle') ? doc.getElementById('abonnent-quelle').value : null,
+      knopf: (() => { const b = doc.querySelector('#abonnent-form button[type=submit]'); return b ? {text: b.textContent, gesperrt: b.disabled} : null; })(),
+      requests: requests.slice(vor).map(r => `${r.m} ${r.p} ${r.s} ${r.body ? JSON.stringify(r.body) : ''}`),
+    });
+    out.formular = {
+      vorhanden: !!doc.getElementById('abonnent-form'),
+      quelle_attrs: (() => { const q = doc.getElementById('abonnent-quelle'); return q ? {min: q.minLength, max: q.maxLength, required: q.required} : null; })(),
+      rolle_optionen: doc.getElementById('abonnent-rolle') ? [...doc.getElementById('abonnent-rolle').options].map(o => ({value: o.value, text: o.textContent})) : null,
+      interessen: [...doc.querySelectorAll('.abonnent-interesse')].map(c => ({wert: c.value, label: c.parentElement.textContent.trim()})),
+    };
+    out.schritte = [];
+    for (const op of arg.ops || []) {
+      const vor = requests.length;
+      doc.getElementById('abonnent-email').value = op.email !== undefined ? op.email : '';
+      doc.getElementById('abonnent-quelle').value = op.quelle !== undefined ? op.quelle : '';
+      const rs = doc.getElementById('abonnent-rolle'); if (rs) rs.value = op.rolle || '';
+      for (const cb of doc.querySelectorAll('.abonnent-interesse')) cb.checked = (op.interessen || []).includes(cb.value);
+      doc.getElementById('abonnent-form').dispatchEvent(new win.Event('submit', {bubbles: true, cancelable: true}));
+      await sleep(op.warte || 1000);
+      out.schritte.push({op, zustand: sicht(vor)});
+    }
+  }
   out.toast = toastText();
   out.fehler_js = fehler.slice(0, 5);
   return out;

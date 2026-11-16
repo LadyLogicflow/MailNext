@@ -107,6 +107,246 @@ class TestUI(MN):
         self.assertTrue(o["pruefung"]["import_knopf_gesperrt"])
 
 
+class TestTestliste(MN):
+    """Testlisten-Verwaltung im Newsletter-Tab (Weby dfabfa4): laden, hinzufügen (PUT mit der GANZEN Liste), Dublette, ungültig, 51. Adresse, löschen, Backend-Fehlertext, Zähler."""
+
+    def start(self, adressen=()):
+        import newsletter
+        m = self.mandant("hilo", "HILO e. V.")
+        if adressen:
+            newsletter.testliste_setzen(m, list(adressen))
+        return m
+
+    def ops(self, ops):
+        o = self.node(szenario="testliste", mandant_name="HILO e. V.", ops=ops)
+        self.assertTrue(o["ok"], o)
+        return o
+
+    def liste(self, m):
+        import newsletter
+        return newsletter.testliste(m)
+
+    def test_liste_wird_geladen_und_gezaehlt(self):
+        m = self.start(["a@example.org", "b@example.org"])
+        o = self.ops([])
+        print("TL_START", json.dumps({k: o["start"][k] for k in ("zaehler", "eintraege")}, ensure_ascii=False), o["start_requests"])
+        self.assertEqual(o["start"]["zaehler"], "Empfänger: 2")
+        self.assertEqual(o["start"]["eintraege"], ["a@example.org", "b@example.org"])
+        self.assertIn("GET /api/v1/betreiber/mandanten/%d/testliste 200" % m["id"], o["start_requests"])
+
+    def test_leere_liste_zeigt_hinweis(self):
+        self.start()
+        o = self.ops([])
+        self.assertEqual(o["start"]["zaehler"], "Empfänger: 0")
+        self.assertIn("Noch keine Adressen in der Testliste.", o["start"]["leer_text"])
+
+    def test_hinzufuegen_sendet_ganze_liste_und_aktualisiert_zaehler(self):
+        m = self.start(["a@example.org"])
+        o = self.ops([{"op": "tippen", "wert": "Neu@Example.org"}, {"op": "klick_hinzufuegen"}])
+        z = o["schritte"][1]["zustand"]
+        print("TL_ADD", json.dumps({k: z[k] for k in ("zaehler", "eintraege", "toast", "requests")}, ensure_ascii=False))
+        self.assertEqual(o["schritte"][0]["zustand"]["hinzufuegen_gesperrt"], False)
+        self.assertEqual(z["requests"], ["PUT /api/v1/betreiber/mandanten/%d/testliste 200 {\"adressen\":[\"a@example.org\",\"neu@example.org\"]}" % m["id"]])
+        self.assertEqual(z["zaehler"], "Empfänger: 2")
+        self.assertEqual(z["eintraege"], ["a@example.org", "neu@example.org"])
+        self.assertIn("gespeichert", z["toast"])
+        self.assertEqual(self.liste(m), ["a@example.org", "neu@example.org"])
+        self.assertEqual(z["eingabe"], "")
+
+    def test_enter_fuegt_hinzu_ohne_formularabsendung(self):
+        m = self.start()
+        o = self.ops([{"op": "tippen", "wert": "x@example.org"}, {"op": "enter"}])
+        self.assertEqual(self.liste(m), ["x@example.org"])
+        self.assertEqual(o["schritte"][1]["zustand"]["zaehler"], "Empfänger: 1")
+
+    def test_dublette_wird_abgelehnt_ohne_anfrage(self):
+        m = self.start(["a@example.org"])
+        o = self.ops([{"op": "tippen", "wert": "A@example.org"}, {"op": "klick_hinzufuegen"}])
+        z = o["schritte"][1]["zustand"]
+        self.assertEqual(z["requests"], [])
+        self.assertIn("bereits in der Testliste", z["toast"])
+        self.assertEqual(self.liste(m), ["a@example.org"])
+
+    def test_ungueltige_adresse_sperrt_den_knopf_und_sendet_nichts(self):
+        m = self.start()
+        o = self.ops([{"op": "tippen", "wert": "kein-at-zeichen"}, {"op": "klick_hinzufuegen"}, {"op": "enter"}])
+        self.assertTrue(o["schritte"][0]["zustand"]["hinzufuegen_gesperrt"])
+        for s in o["schritte"]:
+            self.assertEqual(s["zustand"]["requests"], [])
+        self.assertEqual(self.liste(m), [])
+
+    def test_51_adresse_wird_abgelehnt(self):
+        m = self.start(["a%02d@example.org" % i for i in range(50)])
+        o = self.ops([{"op": "tippen", "wert": "zuviel@example.org"}, {"op": "klick_hinzufuegen"}])
+        z = o["schritte"][1]["zustand"]
+        self.assertEqual(o["start"]["zaehler"], "Empfänger: 50")
+        self.assertEqual(z["requests"], [])
+        self.assertIn("Maximal 50", z["toast"])
+        self.assertEqual(len(self.liste(m)), 50)
+
+    def test_loeschen_sendet_liste_ohne_die_adresse(self):
+        m = self.start(["a@example.org", "b@example.org", "c@example.org"])
+        o = self.ops([{"op": "loeschen", "adresse": "b@example.org"}])
+        z = o["schritte"][0]["zustand"]
+        self.assertEqual(z["requests"], ["PUT /api/v1/betreiber/mandanten/%d/testliste 200 {\"adressen\":[\"a@example.org\",\"c@example.org\"]}" % m["id"]])
+        self.assertEqual(z["zaehler"], "Empfänger: 2")
+        self.assertEqual(z["eintraege"], ["a@example.org", "c@example.org"])
+        self.assertEqual(self.liste(m), ["a@example.org", "c@example.org"])
+
+    def test_backend_fehlertext_wird_sichtbar(self):
+        """Das Backend ist strenger als die Oberfläche: 'a@b' besteht die Oberflächenprüfung nicht, aber 'a..b@example.org' besteht beide;
+        für den Fehlerweg wird die Antwort des Servers ersetzt (400 mit Meldung), die Seite zeigt den Text und behält die Liste."""
+        m = self.start(["a@example.org"])
+        import newsletter
+        with mock.patch.object(newsletter, "testliste_setzen", side_effect=newsletter.Fehler("adressen_ungueltig", "Eine Adresse in der Testliste ist ungültig", 400)):
+            o = self.ops([{"op": "tippen", "wert": "x@example.org"}, {"op": "klick_hinzufuegen"}])
+        z = o["schritte"][1]["zustand"]
+        print("TL_FEHLER", json.dumps({k: z[k] for k in ("fehler", "toast", "zaehler", "eintraege", "requests")}, ensure_ascii=False))
+        self.assertTrue(z["requests"][0].startswith("PUT "))
+        self.assertIn("400", z["requests"][0])
+        self.assertTrue(z["fehler"], "Fehlertext des Servers muss im Fehlerfeld stehen")
+        self.assertIn("Fehler beim Speichern", z["toast"])
+        self.assertEqual(z["zaehler"], "Empfänger: 1")                                     # Liste unverändert
+        self.assertEqual(self.liste(m), ["a@example.org"])
+
+    def test_adressen_werden_nur_als_text_ausgegeben(self):
+        """Gültige, aber ungewöhnliche Zeichen (&, +, %) erscheinen unverändert als Text; es entstehen keine Elemente (kein innerHTML mit Adressen)."""
+        m = self.start(["a&b@example.org", "a+b@example.org", "a%3Cb@example.org"])
+        o = self.ops([])
+        self.assertEqual(o["start"]["eintraege"], ["a&b@example.org", "a+b@example.org", "a%3Cb@example.org"])
+        self.assertEqual(o["start"]["html_elemente_in_liste"], 0)
+
+    def test_quelltext_hat_keine_inline_handler_und_adressen_nur_ueber_textcontent(self):
+        quelle = open(os.path.join(UI_DIR, "betreiber.js"), encoding="utf-8").read()
+        i = quelle.index("// Testlisten-Verwaltung")
+        j = quelle.index("// Abonnent manuell hinzufügen") if "// Abonnent manuell hinzufügen" in quelle[i:] else len(quelle)
+        teil = quelle[i:j]
+        for verboten in ("onclick", "onerror", "onload", "javascript:", "insertAdjacentHTML", "outerHTML", "document.write"):
+            self.assertNotIn(verboten, teil, verboten)
+        for zeile in teil.splitlines():
+            if "innerHTML" in zeile:
+                self.assertRegex(zeile.strip(), r"innerHTML\s*=\s*''\s*;", "innerHTML nur zum Leeren: " + zeile)
+
+
+class TestAbonnentManuell(MN):
+    """Abonnent manuell hinzufügen (Weby 8800011): Pflichtfeld Quelle/Einwilligung, Quelle im Request, Dublette, abgemeldet, ungültig, Rolle/Interessen."""
+
+    def start(self):
+        return self.mandant("hilo", "HILO e. V.")
+
+    def ops(self, ops):
+        o = self.node(szenario="abonnent", mandant_name="HILO e. V.", ops=ops, warte=900)
+        self.assertTrue(o["ok"], o)
+        return o
+
+    def zustand(self, o, i=0):
+        return o["schritte"][i]["zustand"]
+
+    def test_formular_zeigt_pflichtfeld_rolle_und_interessen(self):
+        self.start()
+        o = self.ops([])
+        f = o["formular"]
+        self.assertTrue(f["vorhanden"])
+        self.assertTrue(f["quelle_attrs"]["required"])
+        self.assertEqual([r["value"] for r in f["rolle_optionen"]], ["", "verein", "beratungsstelle"])
+        self.assertEqual([i["wert"] for i in f["interessen"]], ["sortnext", "booknext"])
+
+    def test_leere_und_zu_kurze_quelle_wird_abgelehnt(self):
+        m = self.start()
+        o = self.ops([{"email": "neu@example.org", "quelle": ""}, {"email": "neu@example.org", "quelle": "abc"}, {"email": "neu@example.org", "quelle": "    "}])
+        for i in range(3):
+            z = self.zustand(o, i)
+            self.assertEqual(z["requests"], [], i)
+            self.assertIn("Quelle/Einwilligung", z["fehler"] or "", i)
+        self.assertIsNone(self.zeile(m["id"], "neu@example.org"))
+
+    def test_zu_lange_quelle_wird_in_der_oberflaeche_abgelehnt(self):
+        """Das Backend erlaubt 1 bis 100 Zeichen (betreiber.py); die Oberfläche muss dieselbe Grenze haben, sonst läuft eine 101-200 Zeichen lange Quelle in einen Serverfehler."""
+        m = self.start()
+        o = self.ops([{"email": "neu@example.org", "quelle": "x" * 101}])
+        z = self.zustand(o)
+        print("AB_LANG", json.dumps({k: z[k] for k in ("fehler", "requests")}, ensure_ascii=False))
+        self.assertEqual(z["requests"], [])
+        self.assertIn("Quelle/Einwilligung", z["fehler"] or "")
+        self.assertEqual(o["formular"]["quelle_attrs"]["max"], 100)
+
+    def test_ungueltige_adresse_wird_abgelehnt(self):
+        m = self.start()
+        o = self.ops([{"email": "kein-at", "quelle": "Papierformular vom 12.11."}, {"email": "", "quelle": "Papierformular vom 12.11."}])
+        for i in range(2):
+            z = self.zustand(o, i)
+            self.assertEqual(z["requests"], [], i)
+            self.assertIn("gültige E-Mail-Adresse", z["fehler"] or "", i)
+
+    def test_quelle_landet_im_request_und_im_abonnent(self):
+        m = self.start()
+        quelle = "Papierformular vom 12.11."
+        o = self.ops([{"email": "Neu@Example.org", "quelle": "  " + quelle + "  ", "rolle": "verein", "interessen": ["sortnext", "booknext"]}])
+        z = self.zustand(o)
+        print("AB_NEU", json.dumps({k: z[k] for k in ("erfolg", "fehler", "toast", "requests", "email", "quelle")}, ensure_ascii=False))
+        req = z["requests"][0]
+        self.assertTrue(req.startswith("POST /api/v1/betreiber/mandanten/%d/abonnenten/import 200 " % m["id"]), req)
+        body = json.loads(req.split(" 200 ", 1)[1])
+        self.assertEqual(body["quelle"], quelle)                                       # getrimmt, Wortlaut unverändert
+        self.assertEqual(body["daten"], "<%d Zeichen>" % len("Neu@Example.org"))
+        self.assertIs(body["einwilligung_bestaetigt"], True)
+        self.assertEqual((body["rolle"], body["interessen"]), ("verein", ["sortnext", "booknext"]))
+        self.assertIn("erfolgreich hinzugefügt", z["erfolg"] or "")
+        row = self.zeile(m["id"], "neu@example.org")
+        self.assertEqual((row["status"], row["herkunft"], row["quelle"], row["rolle"]), ("bestaetigt", "import", quelle, "verein"))
+        self.assertEqual(json.loads(row["interessen"]), ["sortnext", "booknext"])
+        self.assertEqual((z["email"], z["quelle"]), ("", ""))                            # Formular zurückgesetzt
+
+    def test_dublette_meldung_und_keine_zweite_zeile(self):
+        m = self.start()
+        self.importiere(m, "da@example.org", quelle="Erstimport")
+        o = self.ops([{"email": "da@example.org", "quelle": "Papierformular vom 12.11."}])
+        z = self.zustand(o)
+        print("AB_DUBLETTE", json.dumps({k: z[k] for k in ("erfolg", "fehler", "toast", "email")}, ensure_ascii=False))
+        self.assertIn("bereits in der Liste", (z["erfolg"] or "") + (z["fehler"] or ""))
+        self.assertEqual(self.zahlen(m), {"bestaetigt": 1})
+
+    def test_abgemeldet_meldung_und_nicht_wieder_aufgenommen(self):
+        m = self.start()
+        self.anmelden_und_bestaetigen(m, "weg@example.org")
+        abonnenten.abmelden(self.pers_token(m, "weg@example.org"), m)
+        vorher = dict(self.zeile(m["id"], "weg@example.org"))
+        o = self.ops([{"email": "weg@example.org", "quelle": "Papierformular vom 12.11."}])
+        z = self.zustand(o)
+        print("AB_ABGEMELDET", json.dumps({k: z[k] for k in ("erfolg", "fehler", "toast", "email")}, ensure_ascii=False))
+        self.assertIn("abgemeldet", (z["erfolg"] or "") + (z["fehler"] or ""))
+        self.assertEqual(dict(self.zeile(m["id"], "weg@example.org")), vorher)         # nichts angefasst
+
+    def test_unbestaetigte_adresse_zeigt_keine_erfolgsmeldung(self):
+        """Eine Adresse, die sich selbst angemeldet, aber nicht bestätigt hat, wird vom Import übersprungen (uebersprungen.unbestaetigt):
+        die Oberfläche darf dann nicht 'Abonnent hinzugefügt' melden."""
+        m = self.start()
+        self.assertEqual(self.anmelden(m["slug"], "offen@example.org").status_code, 200)
+        o = self.ops([{"email": "offen@example.org", "quelle": "Papierformular vom 12.11."}])
+        z = self.zustand(o)
+        print("AB_UNBESTAETIGT", json.dumps({k: z[k] for k in ("erfolg", "fehler", "toast")}, ensure_ascii=False))
+        self.assertEqual(self.zeile(m["id"], "offen@example.org")["status"], "unbestaetigt")
+        self.assertNotIn("hinzugefügt", (z["erfolg"] or "") + (z["toast"] or ""))
+
+    def test_backend_fehlertext_wird_sichtbar(self):
+        m = self.start()
+        o = self.ops([{"email": "x@example.org", "quelle": "Papierformular vom 12.11.", "rolle": "gibt-es-nicht"}])
+        z = self.zustand(o)
+        print("AB_FEHLER", json.dumps({k: z[k] for k in ("fehler", "requests", "knopf")}, ensure_ascii=False))
+        self.assertTrue(any(" 400 " in r for r in z["requests"]), z["requests"])
+        self.assertTrue(z["fehler"])
+        self.assertEqual(z["knopf"], {"text": "Abonnent hinzufügen", "gesperrt": False})     # Knopf wieder frei
+        self.assertIsNone(self.zeile(m["id"], "x@example.org"))
+
+    def test_quelltext_hat_keine_inline_handler(self):
+        quelle = open(os.path.join(UI_DIR, "betreiber.js"), encoding="utf-8").read()
+        i = quelle.index("// Abonnent manuell hinzufügen")
+        teil = quelle[i:]
+        for verboten in ("onclick", "onerror", "onload", "javascript:", "insertAdjacentHTML", "outerHTML", "document.write"):
+            self.assertNotIn(verboten, teil[:12000], verboten)
+        self.assertNotIn("innerHTML", teil[:9000])
+
+
 class TestEditor(MN):
     """Newsletter-Entwurfs-Editor: Speichern mit Segment, Testmail nur an den Betreiber, Freigabe nur mit Bestätigung und aktuellem Hash."""
 
