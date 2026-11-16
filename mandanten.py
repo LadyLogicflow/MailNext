@@ -22,6 +22,7 @@ STANDARD_DESIGN = {
     "schrift": "sans", "logo_url": "", "absender_name": "", "absender_adresse": "", "firmenangaben": "",
     "impressum_url": "", "datenschutz_url": "", "basis_url": "", "betreff_bestaetigung": "",
     "rollen": [], "interessen": [], "cors_ursprunge": [],
+    "logo_bild_id": None, "balken_farbe": "",
 }
 ERLAUBT = set(STANDARD_DESIGN)
 
@@ -82,6 +83,11 @@ def design_pruefen(eingabe: dict, basis: dict | None = None) -> dict:
         raise Ungueltig("schrift muss eine von %s sein" % ", ".join(sorted(SCHRIFTEN)))
     for f in ("logo_url", "impressum_url", "datenschutz_url", "basis_url"):
         d[f] = _url(d[f], f)
+    if d["logo_bild_id"] is not None and (isinstance(d["logo_bild_id"], bool) or not isinstance(d["logo_bild_id"], int) or d["logo_bild_id"] < 1):
+        raise Ungueltig("logo_bild_id muss eine Bild-Nummer oder null sein")
+    if d["balken_farbe"] and not FARBE.match(str(d["balken_farbe"])):
+        raise Ungueltig("balken_farbe muss eine Farbe wie #1f3a5f sein (oder leer = Primärfarbe)")
+    d["balken_farbe"] = str(d["balken_farbe"] or "")
     d["absender_name"] = _text(d["absender_name"], "absender_name", 100)
     d["absender_adresse"] = _text(d["absender_adresse"], "absender_adresse", 254)
     if d["absender_adresse"] and not EMAIL_SIMPLE.match(d["absender_adresse"]):
@@ -110,6 +116,8 @@ def anlegen(slug: str, name: str, design: dict | None, akteur: str) -> dict:
     if not name:
         raise Ungueltig("name fehlt")
     d = design_pruefen(design or {})
+    if d["logo_bild_id"] is not None:
+        raise Ungueltig("logo_bild_id kann erst nach dem Anlegen gesetzt werden (das Bild gehört zu einem bestehenden Mandanten)")
     with db.verbindung() as c:
         if c.execute("SELECT 1 FROM mandant WHERE slug=?", (slug,)).fetchone():
             raise Ungueltig("Diese Kennung (slug) gibt es schon")
@@ -147,6 +155,10 @@ def aendern(mandant_id: int, name=None, aktiv=None, design=None) -> dict:
     if not neuer_name:
         raise Ungueltig("name fehlt")
     neues_design = design_pruefen(design, basis=m["design"]) if design is not None else m["design"]
+    if neues_design.get("logo_bild_id") is not None:
+        import bilder
+        if not bilder.gehoert_zu(mandant_id, neues_design["logo_bild_id"]):
+            raise Ungueltig("logo_bild_id: Dieses Bild gibt es für diesen Mandanten nicht")
     with db.verbindung() as c:
         c.execute("UPDATE mandant SET name=?, aktiv=?, design=?, geaendert=? WHERE id=?",
                   (neuer_name, 1 if (m["aktiv"] if aktiv is None else bool(aktiv)) else 0,

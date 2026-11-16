@@ -64,6 +64,19 @@ CREATE TABLE IF NOT EXISTS anmelde_log (
     zeit TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_anmelde_log_zeit ON anmelde_log(mandant_id, zeit);
+CREATE TABLE IF NOT EXISTS bild (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    mandant_id INTEGER NOT NULL REFERENCES mandant(id),
+    token TEXT NOT NULL UNIQUE,
+    endung TEXT NOT NULL,
+    content_type TEXT NOT NULL,
+    breite INTEGER NOT NULL,
+    hoehe INTEGER NOT NULL,
+    groesse INTEGER NOT NULL,
+    sha256 TEXT NOT NULL,
+    alt TEXT NOT NULL,
+    erstellt TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS testadresse (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     mandant_id INTEGER NOT NULL REFERENCES mandant(id),

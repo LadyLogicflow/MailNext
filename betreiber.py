@@ -8,6 +8,7 @@ from flask import Blueprint, g, jsonify, request
 
 import abonnenten
 import betreiber_auth
+import bilder
 import db
 import import_csv
 import ki
@@ -104,6 +105,50 @@ def aendern(mandant_id):
         return _fehler(str(exc))
     _audit("mandant_geaendert", "mandant=%s felder=%s" % (m["slug"], ",".join(sorted(d))))
     return jsonify(_sicht(m))
+
+
+# ----- Bilder (Logo, später Newsletter-Bilder) -----
+
+@bp.post("/mandanten/<int:mandant_id>/bilder")
+@betreiber_auth.betreiber_pflicht
+def bild_hochladen(mandant_id):
+    """Bild annehmen: multipart mit file (Pflicht) und alt (Pflicht, 1-150 Zeichen). Neu-Kodierung ohne Metadaten, siehe bilder.py. Ins Audit kommen nur Zahlen."""
+    m = _mandant_oder_404(mandant_id)
+    if m is None:
+        return jsonify({"error": "nicht_gefunden"}), 404
+    datei = request.files.get("file")
+    try:
+        if datei is None:
+            raise bilder.BildFehler("datei_fehlt")
+        bild = bilder.speichern(m, datei.read(bilder.MAX_BYTES + 1), request.form.get("alt"))
+    except bilder.BildFehler as f:
+        return jsonify({"error": f.code, "meldung": f.meldung}), (413 if f.code == "zu_gross" else 400)
+    _audit("bild_hochgeladen", "mandant=%s bild=%d bytes=%d" % (m["slug"], bild["id"], bild["groesse_bytes"]))
+    return jsonify(bild), 201
+
+
+@bp.get("/mandanten/<int:mandant_id>/bilder")
+@betreiber_auth.betreiber_pflicht
+def bilder_liste(mandant_id):
+    m = _mandant_oder_404(mandant_id)
+    if m is None:
+        return jsonify({"error": "nicht_gefunden"}), 404
+    liste_ = bilder.liste(m)
+    _audit("bilder_gelesen", "mandant=%s anzahl=%d" % (m["slug"], len(liste_)))
+    return jsonify(liste_)
+
+
+@bp.delete("/mandanten/<int:mandant_id>/bilder/<int:bild_id>")
+@betreiber_auth.betreiber_pflicht
+def bild_loeschen(mandant_id, bild_id):
+    m = _mandant_oder_404(mandant_id)
+    if m is None or not bilder.gehoert_zu(mandant_id, bild_id):
+        return jsonify({"error": "nicht_gefunden"}), 404
+    if bilder.in_verwendung(m, bild_id):
+        return jsonify({"error": "bild_in_verwendung", "meldung": "Das Bild wird gebraucht (Logo oder versendeter Newsletter) und kann nicht gelöscht werden."}), 409
+    bilder.loeschen(m, bild_id)
+    _audit("bild_geloescht", "mandant=%s bild=%d" % (m["slug"], bild_id))
+    return "", 204
 
 
 @bp.post("/mandanten/<int:mandant_id>/einwilligungen")

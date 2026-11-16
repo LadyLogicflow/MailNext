@@ -5,6 +5,7 @@ GET ändert nie etwas (Mail-Scanner rufen Links ab). CORS nur für die Ursprüng
 from flask import Blueprint, Response, jsonify, make_response, request
 
 import abonnenten
+import bilder
 import config
 import mandanten
 import seiten
@@ -202,3 +203,20 @@ def einstellungen_seite(slug):
         return seiten.meldung(mandant, "Newsletter", MELDUNGEN["bereits_abgemeldet"], 409)
     except FormFehler:
         return seiten.meldung(mandant, "Eingabe ungültig", "Ein Feld hat einen unbekannten Wert.", 400)
+
+
+@bp.get("/<slug>/bild/<dateiname>")
+def bild(slug, dateiname):
+    """Bild eines Mandanten, nur lesend und ohne Anmeldung (Logo und Bilder in Newsletter-Mails). Fester Content-Type aus der Datenbank, nie aus der
+    Dateiendung; jede Abweichung (Mandant, Token, Endung) ist ein gleichförmiges 404."""
+    treffer = bilder.ausliefern(slug, dateiname)
+    if treffer is None:
+        return Response("Nicht gefunden", status=404, mimetype="text/plain")
+    daten, typ = treffer
+    antwort = Response(daten, status=200, mimetype=typ)
+    antwort.headers["X-Content-Type-Options"] = "nosniff"
+    antwort.headers["Cache-Control"] = "public, max-age=86400"
+    antwort.headers["Content-Disposition"] = "inline"
+    antwort.headers["Content-Security-Policy"] = "default-src 'none'; sandbox"
+    antwort.headers["Cross-Origin-Resource-Policy"] = "cross-origin"
+    return antwort
