@@ -41,7 +41,14 @@ async function apiCall(path, options = {}) {
     }
 
     if (!response.ok) {
-        if (response.status === 401 || response.status === 403) {
+        if (response.status === 401) {
+            throw new Error('Bitte im Portal als Betreiber anmelden');
+        }
+        if (response.status === 403) {
+            // 403 mit meldung -> meldung anzeigen; ohne meldung (oder error="forbidden") -> Anmelde-Text
+            if (data.meldung) {
+                throw new Error(data.meldung);
+            }
             throw new Error('Bitte im Portal als Betreiber anmelden');
         }
         throw new Error(data.meldung || data.error || 'Ein Fehler ist aufgetreten');
