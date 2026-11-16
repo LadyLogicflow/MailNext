@@ -181,7 +181,7 @@ async function main() {
         doc.getElementById('newsletter-form').dispatchEvent(new win.Event('submit', {bubbles: true, cancelable: true}));
         await sleep(1200);
       }
-      if (op.op === 'testmail') { win.__prompt = op.an === undefined ? '' : op.an; await klick('Testmail senden'); await sleep(600); }
+      if (op.op === 'testmail') { await klick('Testmail an Testliste'); await sleep(600); }
       if (op.op === 'freigeben') { win.__bestaetigen = op.bestaetigen !== false; await klick('Freigeben & Versenden'); await sleep(900); }
       if (op.op === 'liste') await klick('Zurück zur Liste');
       if (op.op === 'ki_anweisung') doc.getElementById('ki-anweisung').value = op.wert;
