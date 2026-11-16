@@ -377,15 +377,20 @@ def testmail(mandant: dict, entwurf_id: int, an=None, betreiber_email=None) -> d
         if roh in ("gesendet", "datei"):
             ergebnisse.append({"adresse": adresse, "ergebnis": roh})
         else:
-            erster_grund = erster_grund or roh
-            ergebnisse.append({"adresse": adresse, "ergebnis": "fehler", "grund": roh})
+            grund = (mailer.letzter_fehlertyp() or roh) if roh == "fehler" else roh          # bei 'fehler' der Ausnahmetyp (z. B. SMTPAuthenticationError)
+            erster_grund = erster_grund or grund
+            ergebnisse.append({"adresse": adresse, "ergebnis": "fehler", "grund": grund})
     ok = sum(1 for e in ergebnisse if e["ergebnis"] != "fehler")
     if ok == 0:
         raise Fehler("versand_nicht_moeglich", "Die Testmail konnte nicht gesendet werden (%s). Versandmodus und Konto des Mandanten prüfen." % erster_grund, 409)
     with db.verbindung() as c:
         c.execute("UPDATE entwurf SET testmail_hash=?, testmail_am=? WHERE id=? AND mandant_id=?", (z["content_hash"], _iso(_jetzt()), z["id"], mandant["id"]))
-    return {"status": "gesendet" if ok == len(ergebnisse) else "teilweise", "content_hash": z["content_hash"], "gesendet": ok, "fehler": len(ergebnisse) - ok,
-            "ergebnisse": ergebnisse}
+    antwort = {"status": "gesendet" if ok == len(ergebnisse) else "teilweise", "content_hash": z["content_hash"], "gesendet": ok, "fehler": len(ergebnisse) - ok,
+               "ergebnisse": ergebnisse}
+    if antwort["fehler"]:                                    # die Oberfläche zeigt meldung an
+        gruende = sorted({e["grund"] for e in ergebnisse if e["ergebnis"] == "fehler"})
+        antwort["meldung"] = "Testmail an %d von %d Adressen gesendet, %d fehlgeschlagen (%s)." % (ok, len(ergebnisse), antwort["fehler"], ", ".join(gruende))
+    return antwort
 
 
 def _empfaenger_ermitteln(mandant: dict, z) -> list:

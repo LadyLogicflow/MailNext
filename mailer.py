@@ -11,6 +11,7 @@ import os
 import secrets
 import smtplib
 import ssl
+import threading
 import time
 from email.message import EmailMessage
 from email.utils import format_datetime, formataddr, make_msgid
@@ -123,8 +124,18 @@ def _aufraeumen(verz) -> None:
             pass
 
 
+_LETZTER = threading.local()
+
+
+def letzter_fehlertyp() -> str | None:
+    """Name der Ausnahme (ohne Meldungstext, ohne Adresse) des letzten ``senden``-Aufrufs dieses Threads, wenn er 'fehler' ergab, sonst ``None``.
+    Hilft der Oberfläche, die Ursache zu nennen (z. B. SMTPAuthenticationError), ohne dass Einzelheiten des Servers nach außen gehen."""
+    return getattr(_LETZTER, "typ", None)
+
+
 def senden(mandant: dict, an: str, betreff: str, text: str, html_text: str, header: dict | None = None) -> str:
     """Gibt 'aus' | 'datei' | 'gesendet' | 'abgelehnt' | 'absender_fehlt' | 'konfiguration_fehlt' | 'fehler' zurück. Wirft nie; Adressen werden nicht protokolliert."""
+    _LETZTER.typ = None
     modus = mandanten.versandmodus(mandant["id"])
     if modus == "aus":
         return "aus"
@@ -158,4 +169,5 @@ def senden(mandant: dict, an: str, betreff: str, text: str, html_text: str, head
         return "abgelehnt"
     except Exception as exc:
         LOG.warning("Mailversand fehlgeschlagen (Mandant %s, %s)", mandant["slug"], type(exc).__name__)
+        _LETZTER.typ = type(exc).__name__
         return "fehler"
