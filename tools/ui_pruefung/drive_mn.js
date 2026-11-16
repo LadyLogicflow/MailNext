@@ -461,6 +461,55 @@ async function main() {
       out.schritte.push({op, zustand: sicht(vor)});
     }
   }
+  if (arg.szenario === 'tagauswahl') {
+    await klick('Newsletter');
+    await sleep(800);
+    const sicht = (vor) => {
+      const sichtbarEl = (el) => !!el && !el.classList.contains('hidden');
+      const fehlerEl = doc.getElementById('segment-fehler');
+      const speichern = doc.querySelector('#newsletter-form button[type=submit]');
+      return {
+        modi: [...doc.querySelectorAll('input[name="tags_modus"]')].map(r => ({wert: r.value, aktiv: r.checked, text: r.parentElement.textContent.trim()})),
+        tags_gruppe_sichtbar: doc.getElementById('segment-tags-gruppe') ? sichtbarEl(doc.getElementById('segment-tags-gruppe')) : null,
+        tags: [...doc.querySelectorAll('.segment-tag')].map(c => ({wert: c.value, an: c.checked})),
+        segment_fehler: sichtbarEl(fehlerEl) ? fehlerEl.textContent : null,
+        speichern_gesperrt: speichern ? speichern.disabled : null,
+        anzahl: doc.getElementById('vorschau-anzahl') ? doc.getElementById('vorschau-anzahl').textContent : null,
+        toast: toastText(),
+        fehler: sichtbarFehler(),
+        requests: requests.slice(vor).map(r => ({m: r.m, p: r.p.replace('/api/v1/betreiber', ''), s: r.s, body: r.body === undefined ? null : r.body})),
+      };
+    };
+    out.schritte = [];
+    for (const op of arg.ops || []) {
+      const vor = requests.length;
+      if (op.op === 'neu') { await klick('Neuer Entwurf'); await sleep(600); }
+      if (op.op === 'oeffnen') {
+        const zeile = [...doc.querySelectorAll('#main tbody tr')].find(tr => tr.textContent.includes(op.betreff));
+        if (!zeile) throw new Error('Entwurf nicht in der Liste: ' + op.betreff);
+        zeile.click(); await sleep(1200);
+      }
+      if (op.op === 'fuellen') {
+        if (op.betreff !== undefined) doc.getElementById('newsletter-betreff').value = op.betreff;
+        if (op.text !== undefined) doc.getElementById('newsletter-text').value = op.text;
+      }
+      if (op.op === 'modus') {
+        const r = [...doc.querySelectorAll('input[name="tags_modus"]')].find(x => x.value === op.wert);
+        r.checked = true; r.dispatchEvent(new win.Event('change', {bubbles: true})); await sleep(op.warte || 700);
+      }
+      if (op.op === 'tags') {
+        for (const c of doc.querySelectorAll('.segment-tag')) {
+          const soll = op.liste.includes(c.value);
+          if (c.checked !== soll) { c.checked = soll; c.dispatchEvent(new win.Event('change', {bubbles: true})); await sleep(op.warte || 700); }
+        }
+      }
+      if (op.op === 'speichern') {
+        doc.getElementById('newsletter-form').dispatchEvent(new win.Event('submit', {bubbles: true, cancelable: true}));
+        await sleep(1500);
+      }
+      out.schritte.push({op, zustand: sicht(vor)});
+    }
+  }
   out.toast = toastText();
   out.fehler_js = fehler.slice(0, 5);
   return out;

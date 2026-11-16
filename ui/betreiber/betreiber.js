@@ -1578,6 +1578,7 @@ async function renderNewsletterEditor(m, entwurfId) {
 
         let format = entwurf && entwurf.format === 'layout' ? 'layout' : 'text';
         let layoutUi = null;
+        let vorschauLauf = 0;                                                                  // nur die jüngste Empfängerzahl-Antwort zählt
 
         // Formular
         const form = document.createElement('form');
@@ -1837,6 +1838,7 @@ async function renderNewsletterEditor(m, entwurfId) {
                 const checkbox = document.createElement('input');
                 checkbox.type = 'checkbox';
                 checkbox.className = 'segment-rolle';
+                checkbox.addEventListener('change', segmentGeaendert);
                 checkbox.value = rolle.wert;
                 if (entwurf && entwurf.segment.rollen && entwurf.segment.rollen.includes(rolle.wert)) {
                     checkbox.checked = true;
@@ -1862,6 +1864,7 @@ async function renderNewsletterEditor(m, entwurfId) {
                 const checkbox = document.createElement('input');
                 checkbox.type = 'checkbox';
                 checkbox.className = 'segment-interesse';
+                checkbox.addEventListener('change', segmentGeaendert);
                 checkbox.value = interesse.wert;
                 if (entwurf && entwurf.segment.interessen && entwurf.segment.interessen.includes(interesse.wert)) {
                     checkbox.checked = true;
@@ -1873,14 +1876,53 @@ async function renderNewsletterEditor(m, entwurfId) {
             form.appendChild(interessenGroup);
         }
 
-        // Tags
-        if (tagsData.tags && tagsData.tags.length > 0) {
+        // Tags: Modus (vier Möglichkeiten) und Auswahl; bei "nur ohne jeden Tag" entfällt die Liste
+        const gespeicherterModus = entwurf && entwurf.segment ? entwurf.segment.tags_modus : null;
+        if ((tagsData.tags && tagsData.tags.length > 0) || gespeicherterModus === 'ohne_tags') {
+            const tagsModusGroup = document.createElement('div');
+            tagsModusGroup.className = 'form-group';
+            tagsModusGroup.id = 'segment-modus-gruppe';
+            const tagsModusLabel = document.createElement('label');
+            tagsModusLabel.textContent = 'Tag-Auswahl';
+            tagsModusGroup.appendChild(tagsModusLabel);
+            [
+                ['oder', 'mindestens einer der Tags'],
+                ['und', 'alle Tags'],
+                ['ausser', 'alle außer mit diesen Tags'],
+                ['ohne_tags', 'nur ohne jeden Tag'],
+            ].forEach(([mode, beschriftung]) => {
+                const label = document.createElement('label');
+                label.style.display = 'block';
+                label.style.marginTop = '0.25rem';
+                const radio = document.createElement('input');
+                radio.type = 'radio';
+                radio.name = 'tags_modus';
+                radio.value = mode;
+                radio.checked = entwurf ? (gespeicherterModus || 'oder') === mode : mode === 'oder';
+                radio.addEventListener('change', () => { if (radio.checked) segmentGeaendert(); });
+                label.appendChild(radio);
+                label.appendChild(document.createTextNode(' ' + beschriftung));
+                tagsModusGroup.appendChild(label);
+            });
+            const tagsModusHint = document.createElement('small');
+            tagsModusHint.textContent = 'Zwischen Rolle, Interessen und Tags gilt immer UND.';
+            tagsModusHint.style.display = 'block';
+            tagsModusHint.style.marginTop = '0.25rem';
+            tagsModusHint.style.color = '#6b7280';
+            tagsModusGroup.appendChild(tagsModusHint);
+            const segmentFehler = document.createElement('div');
+            segmentFehler.id = 'segment-fehler';
+            segmentFehler.className = 'field-error hidden';
+            tagsModusGroup.appendChild(segmentFehler);
+            form.appendChild(tagsModusGroup);
+
             const tagsGroup = document.createElement('div');
             tagsGroup.className = 'form-group';
+            tagsGroup.id = 'segment-tags-gruppe';
             const tagsLabel = document.createElement('label');
             tagsLabel.textContent = 'Tags';
             tagsGroup.appendChild(tagsLabel);
-            tagsData.tags.forEach(tagObj => {
+            (tagsData.tags || []).forEach(tagObj => {
                 const label = document.createElement('label');
                 label.style.display = 'block';
                 label.style.marginTop = '0.25rem';
@@ -1891,38 +1933,12 @@ async function renderNewsletterEditor(m, entwurfId) {
                 if (entwurf && entwurf.segment.tags && entwurf.segment.tags.includes(tagObj.tag)) {
                     checkbox.checked = true;
                 }
+                checkbox.addEventListener('change', segmentGeaendert);
                 label.appendChild(checkbox);
                 label.appendChild(document.createTextNode(' ' + tagObj.tag + ' (' + tagObj.anzahl + ')'));
                 tagsGroup.appendChild(label);
             });
             form.appendChild(tagsGroup);
-
-            // Tags-Modus
-            const tagsModusGroup = document.createElement('div');
-            tagsModusGroup.className = 'form-group';
-            const tagsModusLabel = document.createElement('label');
-            tagsModusLabel.textContent = 'Tags-Modus';
-            tagsModusGroup.appendChild(tagsModusLabel);
-            ['oder', 'und'].forEach(mode => {
-                const label = document.createElement('label');
-                label.style.display = 'inline-block';
-                label.style.marginRight = '1rem';
-                const radio = document.createElement('input');
-                radio.type = 'radio';
-                radio.name = 'tags_modus';
-                radio.value = mode;
-                radio.checked = entwurf ? (entwurf.segment.tags_modus || 'oder') === mode : mode === 'oder';
-                label.appendChild(radio);
-                label.appendChild(document.createTextNode(' ' + mode.toUpperCase()));
-                tagsModusGroup.appendChild(label);
-            });
-            const tagsModusHint = document.createElement('small');
-            tagsModusHint.textContent = 'ODER: mind. 1 Tag, UND: alle Tags. Zwischen Rolle/Interessen/Tags gilt immer UND.';
-            tagsModusHint.style.display = 'block';
-            tagsModusHint.style.marginTop = '0.25rem';
-            tagsModusHint.style.color = '#6b7280';
-            tagsModusGroup.appendChild(tagsModusHint);
-            form.appendChild(tagsModusGroup);
         }
 
         // Empfängerzahl-Vorschau
@@ -2006,6 +2022,8 @@ async function renderNewsletterEditor(m, entwurfId) {
 
         if (format === 'layout') await setzeFormat('layout');
 
+        segmentAnzeige();
+
         // Initial Vorschau laden wenn bestehender Entwurf
         if (entwurfId) {
             loadEmpfaengervorschau(m, entwurfId);
@@ -2013,32 +2031,81 @@ async function renderNewsletterEditor(m, entwurfId) {
             updateVorschau();
         }
 
-        async function updateVorschau() {
-            const errorDiv = document.getElementById('newsletter-error');
-            errorDiv.classList.add('hidden');
-
+        // Segment aus der Auswahl lesen. ohne_tags schickt nie tags (auch nicht leer), ausser verlangt mindestens einen Tag.
+        function segmentLesen() {
             const rollen = Array.from(document.querySelectorAll('.segment-rolle:checked')).map(cb => cb.value);
             const interessen = Array.from(document.querySelectorAll('.segment-interesse:checked')).map(cb => cb.value);
             const tags = Array.from(document.querySelectorAll('.segment-tag:checked')).map(cb => cb.value);
-            const tags_modus = document.querySelector('input[name="tags_modus"]:checked')?.value || 'oder';
+            const modus = document.querySelector('input[name="tags_modus"]:checked')?.value || 'oder';
 
             const segment = {};
             if (rollen.length > 0) segment.rollen = rollen;
             if (interessen.length > 0) segment.interessen = interessen;
-            if (tags.length > 0) {
+            let fehler = null;
+            if (modus === 'ohne_tags') {
+                segment.tags_modus = 'ohne_tags';
+            } else if (tags.length > 0) {
                 segment.tags = tags;
-                segment.tags_modus = tags_modus;
+                segment.tags_modus = modus;
+            } else if (modus === 'ausser') {
+                fehler = 'Bitte mindestens einen Tag wählen, dessen Abonnentinnen ausgeschlossen werden.';
+            }
+            return {segment, fehler};
+        }
+
+        function zeigeSegmentFehler(text) {
+            const feld = document.getElementById('segment-fehler');
+            if (!feld) return;
+            feld.textContent = text || '';
+            feld.classList.toggle('hidden', !text);
+        }
+
+        // Tag-Liste bei "nur ohne jeden Tag" ausblenden, Pflicht bei "ausser" live prüfen, Speichern sperren
+        function segmentAnzeige() {
+            const modus = document.querySelector('input[name="tags_modus"]:checked')?.value || 'oder';
+            const gruppe = document.getElementById('segment-tags-gruppe');
+            if (gruppe) gruppe.classList.toggle('hidden', modus === 'ohne_tags');
+            const {fehler} = segmentLesen();
+            zeigeSegmentFehler(fehler);
+            const speichern = document.querySelector('#newsletter-form button[type="submit"]');
+            if (speichern) speichern.disabled = !!fehler;
+            return fehler;
+        }
+
+        function segmentGeaendert() {
+            segmentAnzeige();
+            updateVorschau();
+        }
+
+        async function updateVorschau() {
+            const errorDiv = document.getElementById('newsletter-error');
+            errorDiv.classList.add('hidden');
+
+            const {segment, fehler} = segmentLesen();
+            if (fehler) {
+                vorschauLauf++;
+                document.getElementById('vorschau-anzahl').textContent = 'Empfänger: –';
+                return;
             }
 
+            const lauf = ++vorschauLauf;
             try {
                 const result = await apiCall(`/mandanten/${m.id}/abonnenten/vorschau`, {
                     method: 'POST',
                     body: JSON.stringify({segment})
                 });
+                if (lauf !== vorschauLauf) return;
                 document.getElementById('vorschau-anzahl').textContent = `Empfänger: ${result.anzahl}`;
+                zeigeSegmentFehler('');
             } catch (err) {
-                errorDiv.textContent = err.message;
-                errorDiv.classList.remove('hidden');
+                if (lauf !== vorschauLauf) return;
+                if (err.code === 'segment_ungueltig') {
+                    document.getElementById('vorschau-anzahl').textContent = 'Empfänger: –';
+                    zeigeSegmentFehler(err.message);
+                } else {
+                    errorDiv.textContent = err.message;
+                    errorDiv.classList.remove('hidden');
+                }
             }
         }
 
@@ -2083,17 +2150,12 @@ async function renderNewsletterEditor(m, entwurfId) {
                 return;
             }
 
-            const rollen = Array.from(document.querySelectorAll('.segment-rolle:checked')).map(cb => cb.value);
-            const interessen = Array.from(document.querySelectorAll('.segment-interesse:checked')).map(cb => cb.value);
-            const tags = Array.from(document.querySelectorAll('.segment-tag:checked')).map(cb => cb.value);
-            const tags_modus = document.querySelector('input[name="tags_modus"]:checked')?.value || 'oder';
-
-            const segment = {};
-            if (rollen.length > 0) segment.rollen = rollen;
-            if (interessen.length > 0) segment.interessen = interessen;
-            if (tags.length > 0) {
-                segment.tags = tags;
-                segment.tags_modus = tags_modus;
+            const {segment, fehler: segmentFehler} = segmentLesen();
+            if (segmentFehler) {
+                zeigeSegmentFehler(segmentFehler);
+                errorDiv.textContent = 'Bitte die Zielgruppe prüfen';
+                errorDiv.classList.remove('hidden');
+                return;
             }
 
             try {
@@ -2114,6 +2176,7 @@ async function renderNewsletterEditor(m, entwurfId) {
                 }
             } catch (err) {
                 if (layoutModus && err.feld) layoutUi.fehlerZeigen(err.feld, err.message);
+                if (err.code === 'segment_ungueltig') zeigeSegmentFehler(err.message);
                 errorDiv.textContent = err.message;
                 errorDiv.classList.remove('hidden');
             }

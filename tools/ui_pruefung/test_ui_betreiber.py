@@ -1077,3 +1077,156 @@ class TestVersandRate(MN):
         self.assertFalse(s["knopf"]["gesperrt"])                                                  # Eingabe bleibt korrigierbar
         self.assertEqual(s["wert"], "50")
         self.assertEqual(newsletter.limit_pro_stunde(m["id"]), 100)
+
+
+class TestTagAuswahl(MN):
+    """Empfängerauswahl nach Tags (catrin #19209/#19211): vier Modi oder, und, ausser, ohne_tags. Backend v0.7.0 (ausser, ohne_tags) liegt noch nicht auf main:
+    solange newsletter._segment_pruefen die neuen Modi nicht kennt, ersetzt backend_v070() die beiden Funktionen durch eine Umsetzung der Spezifikation von Sorty."""
+
+    def vorbereiten(self):
+        m = self.mandant("hilo", "HILO e. V.")
+        text = mc([["a@example.org", "", "", "Spender", ""], ["b@example.org", "", "", "Spender,Verein A", ""], ["c@example.org", "", "", "Verein A", ""], ["d@example.org", "", "", "", ""]])
+        self.importiere(m, text, rolle="verein", interessen=["sortnext"])
+        return m
+
+    def backend_v070(self):
+        import contextlib, inspect, newsletter
+        if "ausser" in inspect.getsource(newsletter._segment_pruefen):
+            return contextlib.nullcontext()
+        orig_pruefen, orig_ermitteln = newsletter._segment_pruefen, newsletter._empfaenger_ermitteln
+
+        def pruefen(mandant, segment):
+            modus = (segment or {}).get("tags_modus") if isinstance(segment, dict) else None
+            if modus not in ("ausser", "ohne_tags"):
+                return orig_pruefen(mandant, segment)
+            if modus == "ohne_tags" and "tags" in segment:
+                raise newsletter.Fehler("segment_ungueltig", "tags_modus ohne_tags darf nicht zusammen mit tags gesendet werden", 400)
+            tags = segment.get("tags")
+            if modus == "ausser" and (not isinstance(tags, list) or not tags or len(tags) > 20):
+                raise newsletter.Fehler("segment_ungueltig", "tags_modus ausser braucht 1 bis 20 tags", 400)
+            ergebnis = orig_pruefen(mandant, {k: v for k, v in segment.items() if k not in ("tags", "tags_modus")})
+            if modus == "ausser":
+                import abonnenten
+                vorhanden = {e["tag"].lower(): e["tag"] for e in abonnenten.tags_liste(mandant["id"])}
+                if any(not isinstance(t, str) or t.strip().lower() not in vorhanden for t in tags):
+                    raise newsletter.Fehler("segment_ungueltig", "tags: unbekannter Tag", 400)
+                ergebnis["tags"] = sorted({vorhanden[t.strip().lower()] for t in tags})
+            ergebnis["tags_modus"] = modus
+            return ergebnis
+
+        def ermitteln(mandant, z):
+            seg = json.loads(z["segment"]) if z["ziel"] != "testliste" else {}
+            modus = seg.get("tags_modus")
+            if modus not in ("ausser", "ohne_tags"):
+                return orig_ermitteln(mandant, z)
+            basis = {k: v for k, v in seg.items() if k not in ("tags", "tags_modus")}
+            gesperrt = {t.lower() for t in seg.get("tags", [])}
+            alle = orig_ermitteln(mandant, {"ziel": z["ziel"], "segment": json.dumps(basis)})
+            with db.verbindung() as c:
+                hat = {r["id"]: {t.lower() for t in json.loads(r["tags"] or "[]")} for r in c.execute("SELECT id, tags FROM abonnent WHERE mandant_id=?", (mandant["id"],))}
+            return [e for e in alle if (not hat[e[1]] if modus == "ohne_tags" else not (gesperrt & hat[e[1]]))]
+
+        stack = contextlib.ExitStack()
+        stack.enter_context(mock.patch.object(newsletter, "_segment_pruefen", pruefen))
+        stack.enter_context(mock.patch.object(newsletter, "_empfaenger_ermitteln", ermitteln))
+        return stack
+
+    def ops(self, ops):
+        o = self.node(szenario="tagauswahl", mandant_name="HILO e. V.", ops=ops)
+        self.assertTrue(o["ok"], o)
+        return o
+
+    def entwuerfe(self):
+        with db.verbindung() as c:
+            return [dict(z) for z in c.execute("SELECT * FROM entwurf ORDER BY id")]
+
+    def vorschau_bodies(self, schritt):
+        return [r["body"] for r in schritt["zustand"]["requests"] if r["p"].endswith("/abonnenten/vorschau")]
+
+    def test_vier_modi_standard_oder_liste_sichtbar(self):
+        self.vorbereiten()
+        z = self.ops([{"op": "neu"}])["schritte"][0]["zustand"]
+        self.assertEqual([(r["wert"], r["text"]) for r in z["modi"]], [("oder", "mindestens einer der Tags"), ("und", "alle Tags"), ("ausser", "alle außer mit diesen Tags"), ("ohne_tags", "nur ohne jeden Tag")])
+        self.assertEqual([r["wert"] for r in z["modi"] if r["aktiv"]], ["oder"])
+        self.assertTrue(z["tags_gruppe_sichtbar"])
+        self.assertEqual([t["wert"] for t in z["tags"]], ["Spender", "Verein A"])
+        self.assertFalse(z["speichern_gesperrt"])
+
+    def test_oder_und_senden_tags_und_modus_und_aktualisieren_die_zahl_live(self):
+        self.vorbereiten()
+        o = self.ops([{"op": "neu"}, {"op": "tags", "liste": ["Spender"]}, {"op": "tags", "liste": ["Spender", "Verein A"]}, {"op": "modus", "wert": "und"}])
+        oder1, oder2, und = o["schritte"][1], o["schritte"][2], o["schritte"][3]
+        self.assertEqual(self.vorschau_bodies(oder1), [{"segment": {"tags": ["Spender"], "tags_modus": "oder"}}])          # ohne Klick auf den Knopf: live
+        self.assertEqual(oder1["zustand"]["anzahl"], "Empfänger: 2")
+        self.assertEqual(oder2["zustand"]["anzahl"], "Empfänger: 3")
+        self.assertEqual(self.vorschau_bodies(und), [{"segment": {"tags": ["Spender", "Verein A"], "tags_modus": "und"}}])
+        self.assertEqual(und["zustand"]["anzahl"], "Empfänger: 1")
+
+    def test_ausser_sendet_tags_zaehlt_speichert_und_zeigt_den_modus_wieder(self):
+        self.vorbereiten()
+        with self.backend_v070():
+            o = self.ops([{"op": "neu"}, {"op": "fuellen", "betreff": "Ohne Spender", "text": "Hallo"}, {"op": "modus", "wert": "ausser"}, {"op": "tags", "liste": ["Spender"]}, {"op": "speichern"}])
+        tags = o["schritte"][3]
+        self.assertEqual(self.vorschau_bodies(tags), [{"segment": {"tags": ["Spender"], "tags_modus": "ausser"}}])
+        self.assertEqual(tags["zustand"]["anzahl"], "Empfänger: 2")                                   # c und d: bestätigte ohne Spender
+        post = [r for r in o["schritte"][4]["zustand"]["requests"] if r["m"] == "POST" and r["p"].endswith("/entwuerfe")][0]
+        self.assertEqual((post["s"], post["body"]["segment"]), (201, {"tags": ["Spender"], "tags_modus": "ausser"}))
+        gespeichert = json.loads(self.entwuerfe()[0]["segment"])
+        self.assertEqual((gespeichert["tags"], gespeichert["tags_modus"]), (["Spender"], "ausser"))
+        nach = o["schritte"][4]["zustand"]                                                            # nach dem Anlegen öffnet der Editor den gespeicherten Entwurf
+        self.assertEqual([r["wert"] for r in nach["modi"] if r["aktiv"]], ["ausser"])
+        self.assertEqual([t["wert"] for t in nach["tags"] if t["an"]], ["Spender"])
+
+    def test_ausser_ohne_tag_ist_gesperrt_und_sendet_nichts(self):
+        self.vorbereiten()
+        with self.backend_v070():
+            o = self.ops([{"op": "neu"}, {"op": "fuellen", "betreff": "B", "text": "T"}, {"op": "modus", "wert": "ausser"}, {"op": "speichern"}, {"op": "tags", "liste": ["Verein A"]}])
+        leer, erzwungen, mit_tag = o["schritte"][2], o["schritte"][3], o["schritte"][4]
+        self.assertTrue(leer["zustand"]["speichern_gesperrt"])
+        self.assertIn("mindestens einen Tag", leer["zustand"]["segment_fehler"])                     # Text am Feld
+        self.assertEqual(self.vorschau_bodies(leer), [])                                              # keine Anfrage mit leerer Auswahl
+        self.assertEqual(leer["zustand"]["anzahl"], "Empfänger: –")
+        self.assertEqual(erzwungen["zustand"]["requests"], [])                                       # auch ein erzwungenes Absenden schickt nichts
+        self.assertEqual(self.entwuerfe(), [])
+        self.assertFalse(mit_tag["zustand"]["speichern_gesperrt"])
+        self.assertIsNone(mit_tag["zustand"]["segment_fehler"])
+        self.assertEqual(self.vorschau_bodies(mit_tag), [{"segment": {"tags": ["Verein A"], "tags_modus": "ausser"}}])
+
+    def test_ohne_tags_blendet_die_liste_aus_und_sendet_nie_tags(self):
+        self.vorbereiten()
+        with self.backend_v070():
+            o = self.ops([{"op": "neu"}, {"op": "fuellen", "betreff": "Nur ohne Tag", "text": "Hallo"}, {"op": "tags", "liste": ["Spender"]}, {"op": "modus", "wert": "ohne_tags"},
+                          {"op": "speichern"}])
+        gewaehlt, ohne, gespeichert = o["schritte"][2], o["schritte"][3], o["schritte"][4]
+        self.assertTrue(gewaehlt["zustand"]["tags_gruppe_sichtbar"])
+        self.assertFalse(ohne["zustand"]["tags_gruppe_sichtbar"])                                    # Liste weg
+        self.assertEqual(self.vorschau_bodies(ohne), [{"segment": {"tags_modus": "ohne_tags"}}])     # kein tags-Feld, obwohl Spender noch angehakt ist
+        self.assertEqual(ohne["zustand"]["anzahl"], "Empfänger: 1")                                   # nur d
+        self.assertFalse(ohne["zustand"]["speichern_gesperrt"])
+        post = [r for r in gespeichert["zustand"]["requests"] if r["m"] == "POST" and r["p"].endswith("/entwuerfe")][0]
+        self.assertEqual(post["body"]["segment"], {"tags_modus": "ohne_tags"})
+        self.assertNotIn("tags", post["body"]["segment"])
+        gespeichert_segment = json.loads(self.entwuerfe()[0]["segment"])
+        self.assertEqual(gespeichert_segment["tags_modus"], "ohne_tags")
+        self.assertNotIn("tags", gespeichert_segment)                                                 # nie tags gespeichert (rollen/interessen normalisiert das Backend auf None)
+        self.assertFalse(gespeichert["zustand"]["tags_gruppe_sichtbar"])                              # beim erneuten Öffnen bleibt die Liste weg
+        self.assertEqual([r["wert"] for r in gespeichert["zustand"]["modi"] if r["aktiv"]], ["ohne_tags"])
+        zurueck = self.ops([{"op": "oeffnen", "betreff": "Nur ohne Tag"}, {"op": "modus", "wert": "oder"}])["schritte"][1]["zustand"]
+        self.assertTrue(zurueck["tags_gruppe_sichtbar"])                                              # anderer Modus: Liste wieder da
+
+    def test_fehler_mit_meldung_erscheint_am_feld(self):
+        import newsletter
+        self.vorbereiten()
+        meldung = "tags: zu viele (höchstens 20), leer oder unbekannt"
+        fehler = newsletter.Fehler("segment_ungueltig", meldung, 400)
+        with mock.patch.object(newsletter, "segment_anzahl", side_effect=fehler):
+            vorschau = self.ops([{"op": "neu"}, {"op": "tags", "liste": ["Spender"]}])["schritte"][1]
+        self.assertEqual([r["s"] for r in vorschau["zustand"]["requests"]], [400])
+        self.assertEqual(vorschau["zustand"]["segment_fehler"], meldung)                              # 1:1 am Feld
+        self.assertEqual(vorschau["zustand"]["anzahl"], "Empfänger: –")
+        with mock.patch.object(newsletter, "_segment_pruefen", side_effect=fehler):
+            speichern = self.ops([{"op": "neu"}, {"op": "fuellen", "betreff": "B", "text": "T"}, {"op": "tags", "liste": ["Spender"]}, {"op": "speichern"}])["schritte"][3]
+        post = [r for r in speichern["zustand"]["requests"] if r["m"] == "POST" and r["p"].endswith("/entwuerfe")][0]
+        self.assertEqual(post["s"], 400)
+        self.assertEqual(speichern["zustand"]["segment_fehler"], meldung)
+        self.assertEqual(self.entwuerfe(), [])
