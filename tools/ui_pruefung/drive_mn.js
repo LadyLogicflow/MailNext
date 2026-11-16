@@ -329,6 +329,104 @@ async function main() {
       };
     }
   }
+  if (arg.szenario === 'layout') {
+    await klick('Newsletter');
+    await sleep(800);
+    win.__cmds = [];
+    doc.execCommand = (name, ui, wert) => { win.__cmds.push([name, wert === undefined ? null : wert]); return true; };
+    const sicht = () => {
+      const q = (s) => doc.querySelector(s);
+      const sichtbarEl = (el) => !!el && !el.classList.contains('hidden');
+      const rahmen = doc.getElementById('layout-vorschau-frame');
+      const link = doc.getElementById('ansicht-link');
+      return {
+        format: [...doc.querySelectorAll('input[name="format"]')].map(r => ({wert: r.value, aktiv: r.checked, gesperrt: r.disabled})),
+        text_gruppe_sichtbar: sichtbarEl(doc.getElementById('text-gruppe')),
+        layout_sichtbar: !!doc.getElementById('layout-gruppe') && sichtbarEl(doc.getElementById('layout-host')),
+        ki_sichtbar: doc.getElementById('ki-gruppe') ? sichtbarEl(doc.getElementById('ki-gruppe')) : null,
+        textfeld_pflicht: doc.getElementById('newsletter-text') ? doc.getElementById('newsletter-text').required : null,
+        leiste: [...doc.querySelectorAll('#layout-leiste button')].map(b => b.textContent.trim()),
+        editor_html: doc.getElementById('layout-text') ? doc.getElementById('layout-text').innerHTML : null,
+        balken_text: doc.getElementById('layout-balken-text') ? doc.getElementById('layout-balken-text').value : null,
+        balken_url: doc.getElementById('layout-balken-url') ? doc.getElementById('layout-balken-url').value : null,
+        bilder: [...doc.querySelectorAll('.layout-bild')].map(p => ({
+          bild_id: p.querySelector('.layout-bild-auswahl').value, alt: p.querySelector('.layout-bild-alt').value,
+          unterschrift: p.querySelector('.layout-bild-unterschrift').value, url: p.querySelector('.layout-bild-url').value,
+          vorschau_src: p.querySelector('.layout-bild-vorschau').getAttribute('src'),
+          optionen: [...p.querySelectorAll('.layout-bild-auswahl option')].map(o => o.value)})),
+        hinzufuegen_gesperrt: doc.getElementById('layout-bild-hinzufuegen') ? doc.getElementById('layout-bild-hinzufuegen').disabled : null,
+        zaehler: doc.getElementById('layout-bilder-zaehler') ? doc.getElementById('layout-bilder-zaehler').textContent : null,
+        feld_fehler: Object.fromEntries([...doc.querySelectorAll('#layout-gruppe [data-feld]')].filter(d => !d.classList.contains('hidden')).map(d => [d.dataset.feld, d.textContent])),
+        markiert: [...doc.querySelectorAll('#layout-gruppe [aria-invalid]')].length,
+        fehler: sichtbarFehler(),
+        vorschau: {
+          rahmen: !!rahmen, sandbox: rahmen ? rahmen.getAttribute('sandbox') : null, hat_allow: rahmen ? rahmen.hasAttribute('allow') : null,
+          srcdoc: rahmen ? rahmen.srcdoc : null, srcdoc_attr: rahmen ? rahmen.hasAttribute('srcdoc') : null,
+          warnungen: [...doc.querySelectorAll('#layout-vorschau-warnungen li')].map(li => li.textContent),
+          text_knopf: sichtbarEl(doc.getElementById('layout-vorschau-text-btn')),
+          text_sichtbar: doc.getElementById('layout-vorschau-text') ? sichtbarEl(doc.getElementById('layout-vorschau-text')) : null,
+          text: doc.getElementById('layout-vorschau-text') ? doc.getElementById('layout-vorschau-text').textContent : null,
+          fehler: doc.getElementById('layout-vorschau-fehler') && !doc.getElementById('layout-vorschau-fehler').classList.contains('hidden') ? doc.getElementById('layout-vorschau-fehler').textContent : null,
+        },
+        ansicht: link ? {href: link.getAttribute('href'), target: link.getAttribute('target'), rel: link.getAttribute('rel'), text: link.textContent} : null,
+        knoepfe: [...doc.querySelectorAll('#main button')].map(b => b.textContent.trim()),
+        liste: [...doc.querySelectorAll('#main thead th')].map(t => t.textContent),
+        listen_zeilen: [...doc.querySelectorAll('#main tbody tr')].map(tr => [...tr.querySelectorAll('td')].map(td => td.textContent.trim())),
+        befehle: win.__cmds.slice(),
+        betreff: doc.getElementById('newsletter-betreff') ? doc.getElementById('newsletter-betreff').value : null,
+        toast: toastText(),
+      };
+    };
+    out.start = sicht();
+    out.schritte = [];
+    for (const op of arg.ops || []) {
+      const vor = requests.length;
+      const editor = doc.getElementById('layout-text');
+      const platz = (i) => doc.querySelectorAll('.layout-bild')[i];
+      if (op.op === 'neu') await klick('Neuer Entwurf');
+      if (op.op === 'oeffnen') {
+        const zeile = [...doc.querySelectorAll('#main tbody tr')].find(tr => tr.textContent.includes(op.betreff));
+        if (!zeile) throw new Error('Entwurf nicht in der Liste: ' + op.betreff);
+        zeile.click(); await sleep(1200);
+      }
+      if (op.op === 'format') {
+        const r = [...doc.querySelectorAll('input[name="format"]')].find(x => x.value === op.wert);
+        r.checked = true; r.dispatchEvent(new win.Event('change', {bubbles: true})); await sleep(900);
+      }
+      if (op.op === 'betreff') doc.getElementById('newsletter-betreff').value = op.wert;
+      if (op.op === 'balken') {
+        if (op.text !== undefined) doc.getElementById('layout-balken-text').value = op.text;
+        if (op.url !== undefined) doc.getElementById('layout-balken-url').value = op.url;
+      }
+      if (op.op === 'html_roh') editor.innerHTML = op.wert;
+      if (op.op === 'html_laden') win.layoutHtmlLaden(editor, op.wert);
+      if (op.op === 'bild_neu') { for (let n = 0; n < (op.anzahl || 1); n++) { doc.getElementById('layout-bild-hinzufuegen').click(); } }
+      if (op.op === 'bild_zwangsklick') { const b = doc.getElementById('layout-bild-hinzufuegen'); b.disabled = false; b.click(); }
+      if (op.op === 'bild_setzen') {
+        const p = platz(op.index);
+        if (op.bild_id !== undefined) { const s = p.querySelector('.layout-bild-auswahl'); s.value = String(op.bild_id); s.dispatchEvent(new win.Event('change', {bubbles: true})); }
+        if (op.alt !== undefined) p.querySelector('.layout-bild-alt').value = op.alt;
+        if (op.unterschrift !== undefined) p.querySelector('.layout-bild-unterschrift').value = op.unterschrift;
+        if (op.url !== undefined) p.querySelector('.layout-bild-url').value = op.url;
+      }
+      if (op.op === 'bild_entfernen') [...platz(op.index).querySelectorAll('button')].find(b => b.textContent.trim() === 'Bild entfernen').click();
+      if (op.op === 'auswahl') {
+        const ziel = editor.querySelector(op.selektor);
+        const r = doc.createRange(); r.setStart(ziel.firstChild || ziel, 0); r.collapse(true);
+        const s = doc.getSelection(); s.removeAllRanges(); s.addRange(r);
+      }
+      if (op.op === 'leiste') await klick(op.knopf, doc.getElementById('layout-leiste'));
+      if (op.op === 'link_url') doc.getElementById('layout-link-url').value = op.wert;
+      if (op.op === 'vorschau') { await klick('Vorschau aktualisieren'); await sleep(900); }
+      if (op.op === 'text_fassung') await klick(op.knopf || 'Text-Fassung anzeigen');
+      if (op.op === 'speichern') {
+        doc.getElementById('newsletter-form').dispatchEvent(new win.Event('submit', {bubbles: true, cancelable: true}));
+        await sleep(op.warte || 1500);
+      }
+      const neu = requests.slice(vor);
+      out.schritte.push({op, requests: neu.map(r => `${r.m} ${r.p} ${r.s}`), bodies: neu.filter(r => r.body).map(r => ({m: r.m, p: r.p, s: r.s, body: r.body})), zustand: sicht()});
+    }
+  }
   out.toast = toastText();
   out.fehler_js = fehler.slice(0, 5);
   return out;

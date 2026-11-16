@@ -800,3 +800,206 @@ class TestApiCall(MN):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestLayout(MN):
+    """Newsletter-Layout Etappe 2 und 3 (Weby): Layout-Entwürfe, Formatleiste, Bildplätze, Vorschau, Im Browser ansehen."""
+
+    def vorbereiten(self):
+        import bilder
+        from tests.test_etappe1 import png
+        m = self.mandant("hilo", "HILO e. V.")
+        self.b1 = bilder.speichern(m, png(groesse=(100, 60)), "Logo klein")["id"]
+        self.b2 = bilder.speichern(m, png(groesse=(80, 80), farbe=(200, 30, 30, 255)), "Rotes Bild")["id"]
+        return m
+
+    def ops(self, ops):
+        o = self.node(szenario="layout", mandant_name="HILO e. V.", ops=ops)
+        self.assertTrue(o["ok"], o)
+        return o
+
+    def entwuerfe(self):
+        with db.verbindung() as c:
+            return [dict(z) for z in c.execute("SELECT * FROM entwurf ORDER BY id")]
+
+    def layout_entwurf(self, m, betreff="Layout-Entwurf"):
+        import newsletter
+        blocks = {"version": 1, "balken": {"text": "Neu", "url": "https://example.org/b"}, "text_html": "<p>Hallo <strong>Welt</strong></p>",
+                  "bilder": [{"bild_id": self.b1, "alt": "Logo klein", "bildunterschrift": "Unten", "url": "https://example.org/i"}]}
+        return newsletter.anlegen(m, betreff, None, "testliste", {}, "layout", blocks)
+
+    def test_umschalter_text_layout(self):
+        self.vorbereiten()
+        o = self.ops([{"op": "neu"}, {"op": "format", "wert": "layout"}, {"op": "format", "wert": "text"}])
+        s0, s1, s2 = (x["zustand"] for x in o["schritte"])
+        self.assertEqual([(r["wert"], r["aktiv"], r["gesperrt"]) for r in s0["format"]], [("text", True, False), ("layout", False, False)])
+        self.assertTrue(s0["text_gruppe_sichtbar"])
+        self.assertFalse(s0["layout_sichtbar"])
+        self.assertTrue(s0["textfeld_pflicht"])
+        self.assertFalse(s1["text_gruppe_sichtbar"])                                          # Layout: Textfeld weg, Layout-Editor da
+        self.assertTrue(s1["layout_sichtbar"])
+        self.assertFalse(s1["textfeld_pflicht"])
+        for knopf in ("Fett", "Kursiv", "Überschrift 2", "Überschrift 3", "Liste", "Nummerierte Liste", "Zentriert", "Link setzen", "Link entfernen"):
+            self.assertIn(knopf, s1["leiste"])
+        self.assertTrue(s2["text_gruppe_sichtbar"])                                           # zurück zu Text
+        self.assertFalse(s2["layout_sichtbar"])
+        self.assertTrue(s2["textfeld_pflicht"])
+
+    def test_bestehende_entwuerfe_format_fest_liste_zeigt_format_und_ansicht_link_nur_bei_layout(self):
+        import newsletter
+        m = self.vorbereiten()
+        self.layout_entwurf(m, "Mit Layout")
+        newsletter.anlegen(m, "Nur Text", "Hallo", "testliste", {})
+        o = self.ops([{"op": "oeffnen", "betreff": "Mit Layout"}])
+        liste = o["start"]
+        self.assertIn("Format", liste["liste"])
+        zeilen = {z[0]: z for z in liste["listen_zeilen"]}
+        self.assertEqual(zeilen["Mit Layout"][1], "Layout")
+        self.assertEqual(zeilen["Nur Text"][1], "Text")
+        s = o["schritte"][0]["zustand"]
+        self.assertTrue(s["layout_sichtbar"])
+        self.assertTrue(all(r["gesperrt"] for r in s["format"]))                              # Format eines bestehenden Entwurfs ist nicht änderbar
+        self.assertEqual(s["ansicht"]["text"], "Im Browser ansehen")
+        self.assertEqual((s["ansicht"]["target"], s["ansicht"]["rel"]), ("_blank", "noopener noreferrer"))
+        self.assertIn("/hilo/newsletter/ansicht/", s["ansicht"]["href"])
+        t = self.ops([{"op": "oeffnen", "betreff": "Nur Text"}])["schritte"][0]["zustand"]
+        self.assertFalse(t["layout_sichtbar"])
+        self.assertTrue(t["text_gruppe_sichtbar"])
+        self.assertIsNone(t["ansicht"])
+        self.assertTrue(all(r["gesperrt"] for r in t["format"]))
+
+    def test_sechs_bilder_ja_siebtes_nein(self):
+        self.vorbereiten()
+        o = self.ops([{"op": "neu"}, {"op": "format", "wert": "layout"}, {"op": "bild_neu", "anzahl": 6}, {"op": "bild_zwangsklick"}, {"op": "bild_entfernen", "index": 0}])
+        s = [x["zustand"] for x in o["schritte"]]
+        self.assertEqual((len(s[2]["bilder"]), s[2]["hinzufuegen_gesperrt"], s[2]["zaehler"]), (6, True, "Bilder: 6 von 6"))
+        self.assertEqual(len(s[3]["bilder"]), 6)                                              # auch ein erzwungener Klick legt kein 7. Bild an
+        self.assertEqual((len(s[4]["bilder"]), s[4]["hinzufuegen_gesperrt"]), (5, False))
+
+    def test_alt_leer_und_kein_bild_blockieren_ohne_anfrage(self):
+        self.vorbereiten()
+        o = self.ops([{"op": "neu"}, {"op": "format", "wert": "layout"}, {"op": "betreff", "wert": "B"}, {"op": "html_roh", "wert": "<p>Text</p>"}, {"op": "bild_neu"},
+                      {"op": "speichern"},
+                      {"op": "bild_setzen", "index": 0, "bild_id": self.b1}, {"op": "bild_setzen", "index": 0, "alt": ""}, {"op": "speichern"}])
+        kein_bild, alt_leer = o["schritte"][5]["zustand"], o["schritte"][8]["zustand"]
+        self.assertEqual(o["schritte"][5]["bodies"], [])
+        self.assertIn("bilder[0].bild_id", kein_bild["feld_fehler"])
+        self.assertEqual(o["schritte"][8]["bodies"], [])
+        self.assertIn("bilder[0].alt", alt_leer["feld_fehler"])
+        self.assertGreaterEqual(alt_leer["markiert"], 1)
+        self.assertEqual(self.entwuerfe(), [])
+
+    def test_serverfehler_mit_feld_wird_am_feld_angezeigt(self):
+        self.vorbereiten()
+        o = self.ops([{"op": "neu"}, {"op": "format", "wert": "layout"}, {"op": "betreff", "wert": "B"}, {"op": "html_roh", "wert": "<p>Text</p>"},
+                      {"op": "balken", "text": "x" * 70}, {"op": "speichern"}])
+        s = o["schritte"][5]
+        self.assertEqual([b["s"] for b in s["bodies"]], [400])
+        self.assertIn("balken.text", s["zustand"]["feld_fehler"])
+        self.assertIn("60", s["zustand"]["feld_fehler"]["balken.text"])
+        self.assertTrue(any("60" in f for f in s["zustand"]["fehler"]))
+        self.assertEqual(self.entwuerfe(), [])
+
+    def test_gesendetes_blocks_entspricht_dem_schema_und_nur_erlaubte_tags(self):
+        self.vorbereiten()
+        schmutz = ('<div style="color:red">Hallo <b>Welt</b><script>alert(1)</script> <span style="x">bunt</span> <a href="javascript:alert(1)">böse</a> '
+                   '<a href="https://example.org/x" onclick="y()">gut</a></div><h2 data-ausrichtung="zentriert" class="c">Titel</h2><ul><li>eins</li></ul>')
+        o = self.ops([{"op": "neu"}, {"op": "format", "wert": "layout"}, {"op": "betreff", "wert": "Layout neu"}, {"op": "balken", "text": "Neu bei uns", "url": "https://example.org/b"},
+                      {"op": "html_roh", "wert": schmutz}, {"op": "bild_neu"}, {"op": "bild_setzen", "index": 0, "bild_id": self.b1, "unterschrift": "Unterschrift", "url": "https://example.org/i"},
+                      {"op": "speichern"}])
+        s = o["schritte"][7]
+        post = [b for b in s["bodies"] if b["m"] == "POST"][0]
+        self.assertEqual(post["s"], 201)
+        body = post["body"]
+        self.assertEqual(set(body), {"betreff", "ziel", "segment", "format", "blocks"})
+        self.assertEqual(body["format"], "layout")
+        self.assertNotIn("text", body)
+        blocks = body["blocks"]
+        self.assertEqual(set(blocks), {"version", "balken", "text_html", "bilder"})
+        self.assertEqual(blocks["version"], 1)
+        self.assertEqual(blocks["balken"], {"text": "Neu bei uns", "url": "https://example.org/b"})
+        self.assertEqual(blocks["bilder"], [{"bild_id": self.b1, "alt": "Logo klein", "bildunterschrift": "Unterschrift", "url": "https://example.org/i"}])
+        self.assertIsInstance(blocks["bilder"][0]["bild_id"], int)
+        html = blocks["text_html"]
+        for verboten in ("script", "style", "javascript", "onclick", "span", "class=", "<div", "alert"):
+            self.assertNotIn(verboten, html)
+        for erwartet in ("<strong>Welt</strong>", '<a href="https://example.org/x">gut</a>', '<h2 data-ausrichtung="zentriert">Titel</h2>', "<ul><li>eins</li></ul>", "böse", "bunt"):
+            self.assertIn(erwartet, html)
+        e = self.entwuerfe()
+        self.assertEqual((len(e), e[0]["format"]), (1, "layout"))
+        self.assertEqual(json.loads(e[0]["blocks"])["bilder"][0]["bild_id"], self.b1)
+        nachher = s["zustand"]                                                                # Editor zeigt die Fassung des Servers
+        self.assertEqual(len(nachher["bilder"]), 1)
+        self.assertNotIn("script", nachher["editor_html"])
+        self.assertEqual(nachher["bilder"][0]["alt"], "Logo klein")
+
+    def test_aendern_schickt_put_ohne_text_und_format(self):
+        m = self.vorbereiten()
+        e = self.layout_entwurf(m)
+        o = self.ops([{"op": "oeffnen", "betreff": "Layout-Entwurf"}, {"op": "balken", "text": "Geändert"}, {"op": "bild_setzen", "index": 0, "bild_id": self.b2, "alt": "Anders"}, {"op": "speichern"}])
+        offen = o["schritte"][0]["zustand"]
+        self.assertEqual(offen["balken_text"], "Neu")
+        self.assertEqual((offen["bilder"][0]["bild_id"], offen["bilder"][0]["alt"], offen["bilder"][0]["unterschrift"], offen["bilder"][0]["url"]), (str(self.b1), "Logo klein", "Unten", "https://example.org/i"))
+        self.assertIn("<strong>Welt</strong>", offen["editor_html"])
+        put = [b for b in o["schritte"][3]["bodies"] if b["m"] == "PUT"][0]
+        self.assertEqual(put["s"], 200)
+        self.assertEqual(set(put["body"]), {"betreff", "ziel", "segment", "blocks"})
+        self.assertEqual(put["body"]["blocks"]["balken"]["text"], "Geändert")
+        self.assertEqual(put["body"]["blocks"]["bilder"][0]["bild_id"], self.b2)
+        gespeichert = json.loads(self.entwuerfe()[0]["blocks"])
+        self.assertEqual((gespeichert["balken"]["text"], gespeichert["bilder"][0]["bild_id"]), ("Geändert", self.b2))
+        self.assertNotEqual(self.entwuerfe()[0]["content_hash"], e["content_hash"])
+
+    def test_formatleiste_ruft_nur_erlaubte_befehle_und_links_werden_geprueft(self):
+        self.vorbereiten()
+        o = self.ops([{"op": "neu"}, {"op": "format", "wert": "layout"}, {"op": "html_roh", "wert": "<p>Text</p>"}, {"op": "auswahl", "selektor": "p"},
+                      {"op": "leiste", "knopf": "Fett"}, {"op": "leiste", "knopf": "Kursiv"}, {"op": "leiste", "knopf": "Überschrift 2"}, {"op": "leiste", "knopf": "Überschrift 3"},
+                      {"op": "leiste", "knopf": "Liste"}, {"op": "leiste", "knopf": "Nummerierte Liste"},
+                      {"op": "leiste", "knopf": "Zentriert"}, {"op": "leiste", "knopf": "Zentriert"},
+                      {"op": "link_url", "wert": "javascript:alert(1)"}, {"op": "leiste", "knopf": "Link setzen"},
+                      {"op": "link_url", "wert": "https://example.org/z"}, {"op": "leiste", "knopf": "Link setzen"}, {"op": "leiste", "knopf": "Link entfernen"}])
+        z = [x["zustand"] for x in o["schritte"]]
+        self.assertEqual(z[9]["befehle"], [["bold", None], ["italic", None], ["formatBlock", "h2"], ["formatBlock", "h3"], ["insertUnorderedList", None], ["insertOrderedList", None]])
+        self.assertIn('data-ausrichtung="zentriert"', z[10]["editor_html"])                  # Zentrierung als Attribut am Absatz
+        self.assertNotIn("data-ausrichtung", z[11]["editor_html"])                            # zweiter Klick nimmt sie zurück
+        self.assertNotIn("style", z[10]["editor_html"])
+        self.assertNotIn("createLink", [c[0] for c in z[13]["befehle"]])                      # javascript: wird nie zum Link
+        self.assertIn("text_html", z[13]["feld_fehler"])
+        self.assertIn(["createLink", "https://example.org/z"], z[15]["befehle"])
+        self.assertEqual(z[16]["befehle"][-1], ["unlink", None])
+
+    def test_fremdes_html_wird_ueber_die_allowlist_angezeigt(self):
+        self.vorbereiten()
+        o = self.ops([{"op": "neu"}, {"op": "format", "wert": "layout"},
+                      {"op": "html_laden", "wert": '<p onclick="x()" style="color:red">a<img src=x onerror=y><script>z()</script><iframe src="https://example.org"></iframe><b>f</b></p><table><tr><td>t</td></tr></table><a href="http://example.org">h</a>'}])
+        html = o["schritte"][2]["zustand"]["editor_html"]
+        for verboten in ("<img", "script", "iframe", "onclick", "onerror", "style", "<table", "<td", "href="):
+            self.assertNotIn(verboten, html)
+        self.assertIn("<strong>f</strong>", html)
+        for text in ("a", "t", "h"):
+            self.assertIn(text, html)
+
+    def test_vorschau_iframe_sandbox_ohne_allow_warnungen_text_und_fehler_am_feld(self):
+        self.vorbereiten()
+        o = self.ops([{"op": "neu"}, {"op": "format", "wert": "layout"}, {"op": "html_roh", "wert": "<p>Hallo Vorschau</p>"}, {"op": "bild_neu"}, {"op": "bild_setzen", "index": 0, "bild_id": self.b1},
+                      {"op": "vorschau"}, {"op": "betreff", "wert": "Betreff der Vorschau"}, {"op": "text_fassung"}, {"op": "balken", "text": "y" * 70}, {"op": "vorschau"}])
+        ohne_betreff = o["schritte"][5]
+        post = [b for b in ohne_betreff["bodies"] if b["m"] == "POST"][0]
+        self.assertTrue(post["p"].endswith("/entwuerfe/vorschau") and post["s"] == 200)
+        self.assertEqual(set(post["body"]), {"blocks"})                                       # leerer Betreff wird nicht mitgeschickt
+        v = ohne_betreff["zustand"]["vorschau"]
+        self.assertTrue(v["rahmen"])
+        self.assertEqual(v["sandbox"], "")                                                    # sandbox ohne Freigaben
+        self.assertFalse(v["hat_allow"])
+        self.assertIn("Hallo Vorschau", v["srcdoc"])
+        self.assertTrue(any("Logo" in w for w in v["warnungen"]), v["warnungen"])
+        self.assertTrue(v["text_knopf"])
+        self.assertFalse(v["text_sichtbar"])
+        mit_betreff = [b for b in o["schritte"][9]["bodies"] if b["m"] == "POST"][0]
+        self.assertEqual(mit_betreff["s"], 400)
+        self.assertEqual(mit_betreff["body"]["betreff"], "Betreff der Vorschau")
+        self.assertIn("balken.text", o["schritte"][9]["zustand"]["feld_fehler"])
+        text = o["schritte"][7]["zustand"]["vorschau"]
+        self.assertTrue(text["text_sichtbar"])
+        self.assertIn("Hallo Vorschau", text["text"])
+        self.assertEqual(self.entwuerfe(), [])                                                # die Vorschau speichert nichts

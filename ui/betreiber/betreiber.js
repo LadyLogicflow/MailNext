@@ -51,7 +51,10 @@ async function apiCall(path, options = {}) {
             }
             throw new Error('Bitte im Portal als Betreiber anmelden');
         }
-        throw new Error(data.meldung || data.error || 'Ein Fehler ist aufgetreten');
+        const fehler = new Error(data.meldung || data.error || 'Ein Fehler ist aufgetreten');
+        fehler.code = data.error || null;
+        fehler.feld = data.feld || null;
+        throw fehler;
     }
 
     return data;
@@ -1190,7 +1193,7 @@ async function renderNewsletter(m) {
             const table = document.createElement('table');
             const thead = document.createElement('thead');
             const headerRow = document.createElement('tr');
-            ['Betreff', 'Status', 'Ziel', 'Erstellt'].forEach(h => {
+            ['Betreff', 'Format', 'Status', 'Ziel', 'Erstellt'].forEach(h => {
                 const th = document.createElement('th');
                 th.textContent = h;
                 headerRow.appendChild(th);
@@ -1207,6 +1210,10 @@ async function renderNewsletter(m) {
                 const betreffCell = document.createElement('td');
                 betreffCell.textContent = e.betreff;
                 row.appendChild(betreffCell);
+
+                const formatCell = document.createElement('td');
+                formatCell.textContent = e.format === 'layout' ? 'Layout' : 'Text';
+                row.appendChild(formatCell);
 
                 const statusCell = document.createElement('td');
                 statusCell.textContent = e.status;
@@ -1475,6 +1482,9 @@ async function renderNewsletterEditor(m, entwurfId) {
 
         loadingDiv.remove();
 
+        let format = entwurf && entwurf.format === 'layout' ? 'layout' : 'text';
+        let layoutUi = null;
+
         // Formular
         const form = document.createElement('form');
         form.id = 'newsletter-form';
@@ -1497,9 +1507,34 @@ async function renderNewsletterEditor(m, entwurfId) {
         betreffGroup.appendChild(betreffHint);
         form.appendChild(betreffGroup);
 
+        // Format: Text oder Layout (bei bestehenden Entwürfen nicht änderbar)
+        const formatGroup = document.createElement('div');
+        formatGroup.className = 'form-group';
+        formatGroup.id = 'format-gruppe';
+        const formatLabel = document.createElement('label');
+        formatLabel.textContent = 'Format';
+        formatGroup.appendChild(formatLabel);
+        [['text', 'Text'], ['layout', 'Layout (Balken, formatierter Text, Bilder)']].forEach(([wert, beschriftung]) => {
+            const label = document.createElement('label');
+            label.style.display = 'inline-block';
+            label.style.marginRight = '1.5rem';
+            const radio = document.createElement('input');
+            radio.type = 'radio';
+            radio.name = 'format';
+            radio.value = wert;
+            radio.checked = format === wert;
+            radio.disabled = !!entwurf;
+            radio.addEventListener('change', () => { if (radio.checked) setzeFormat(wert); });
+            label.appendChild(radio);
+            label.appendChild(document.createTextNode(' ' + beschriftung));
+            formatGroup.appendChild(label);
+        });
+        form.appendChild(formatGroup);
+
         // Text
         const textGroup = document.createElement('div');
         textGroup.className = 'form-group';
+        textGroup.id = 'text-gruppe';
         const textLabel = document.createElement('label');
         textLabel.textContent = 'Text *';
         textGroup.appendChild(textLabel);
@@ -1519,6 +1554,7 @@ async function renderNewsletterEditor(m, entwurfId) {
         if (kiSettings && kiSettings.aktiv && kiSettings.schluessel_gesetzt) {
             const kiGroup = document.createElement('div');
             kiGroup.className = 'form-group';
+            kiGroup.id = 'ki-gruppe';
             kiGroup.style.marginTop = '1.5rem';
             kiGroup.style.padding = '1rem';
             kiGroup.style.background = '#f0f9ff';
@@ -1639,6 +1675,31 @@ async function renderNewsletterEditor(m, entwurfId) {
             kiGroup.appendChild(vorschauContainer);
 
             form.appendChild(kiGroup);
+        }
+
+        // Layout-Editor (Balken, formatierter Text, Bilder, Vorschau)
+        const layoutHost = document.createElement('div');
+        layoutHost.id = 'layout-host';
+        form.appendChild(layoutHost);
+
+        async function setzeFormat(f) {
+            format = f;
+            textGroup.classList.toggle('hidden', f === 'layout');
+            textInput.required = f !== 'layout';
+            const kiBereich = form.querySelector('#ki-gruppe');
+            if (kiBereich) kiBereich.classList.toggle('hidden', f === 'layout');
+            layoutHost.classList.toggle('hidden', f !== 'layout');
+            if (f === 'layout' && !layoutUi) {
+                layoutUi = baueLayoutEditor(m, entwurf, () => betreffInput.value);
+                layoutHost.appendChild(layoutUi.el);
+                try {
+                    await layoutUi.ladeBilder();
+                } catch (err) {
+                    const fehlerFeld = document.getElementById('newsletter-error');
+                    fehlerFeld.textContent = 'Bilder konnten nicht geladen werden: ' + err.message;
+                    fehlerFeld.classList.remove('hidden');
+                }
+            }
         }
 
         // Ziel
@@ -1821,6 +1882,17 @@ async function renderNewsletterEditor(m, entwurfId) {
             actions.appendChild(freigebenBtn);
         }
 
+        if (entwurf && entwurf.ansicht_url && /^(https?:\/\/|\/)/.test(entwurf.ansicht_url)) {
+            const ansichtLink = document.createElement('a');
+            ansichtLink.id = 'ansicht-link';
+            ansichtLink.className = 'btn btn-secondary';
+            ansichtLink.href = entwurf.ansicht_url;
+            ansichtLink.target = '_blank';
+            ansichtLink.rel = 'noopener noreferrer';
+            ansichtLink.textContent = 'Im Browser ansehen';
+            actions.appendChild(ansichtLink);
+        }
+
         const backBtn = document.createElement('button');
         backBtn.type = 'button';
         backBtn.className = 'btn btn-secondary';
@@ -1837,6 +1909,8 @@ async function renderNewsletterEditor(m, entwurfId) {
         });
 
         card.appendChild(form);
+
+        if (format === 'layout') await setzeFormat('layout');
 
         // Initial Vorschau laden wenn bestehender Entwurf
         if (entwurfId) {
@@ -1890,6 +1964,7 @@ async function renderNewsletterEditor(m, entwurfId) {
             const betreff = document.getElementById('newsletter-betreff').value.trim();
             const text = document.getElementById('newsletter-text').value.trim();
             const ziel = document.querySelector('input[name="ziel"]:checked').value;
+            const layoutModus = format === 'layout';
 
             if (!betreff || betreff.length < 1 || betreff.length > 150) {
                 errorDiv.textContent = 'Betreff: 1-150 Zeichen erforderlich';
@@ -1897,7 +1972,18 @@ async function renderNewsletterEditor(m, entwurfId) {
                 return;
             }
 
-            if (!text || text.length < 1 || text.length > 50000) {
+            let blocks = null;
+            if (layoutModus) {
+                layoutUi.fehlerLoeschen();
+                const gelesen = layoutUi.blocksLesen();
+                if (gelesen.fehler.length > 0) {
+                    layoutUi.zeigeClientFehler(gelesen.fehler);
+                    errorDiv.textContent = 'Bitte die markierten Felder prüfen';
+                    errorDiv.classList.remove('hidden');
+                    return;
+                }
+                blocks = gelesen.blocks;
+            } else if (!text || text.length < 1 || text.length > 50000) {
                 errorDiv.textContent = 'Text: 1-50000 Zeichen erforderlich';
                 errorDiv.classList.remove('hidden');
                 return;
@@ -1920,19 +2006,20 @@ async function renderNewsletterEditor(m, entwurfId) {
                 if (eid) {
                     await apiCall(`/mandanten/${mandant.id}/entwuerfe/${eid}`, {
                         method: 'PUT',
-                        body: JSON.stringify({betreff, text, ziel, segment})
+                        body: JSON.stringify(layoutModus ? {betreff, ziel, segment, blocks} : {betreff, text, ziel, segment})
                     });
                     showToast('Entwurf gespeichert', 'success');
                     renderNewsletterEditor(mandant, eid);
                 } else {
                     const result = await apiCall(`/mandanten/${mandant.id}/entwuerfe`, {
                         method: 'POST',
-                        body: JSON.stringify({betreff, text, ziel, segment})
+                        body: JSON.stringify(layoutModus ? {betreff, ziel, segment, format: 'layout', blocks} : {betreff, text, ziel, segment})
                     });
                     showToast('Entwurf erstellt', 'success');
                     renderNewsletterEditor(mandant, result.id);
                 }
             } catch (err) {
+                if (layoutModus && err.feld) layoutUi.fehlerZeigen(err.feld, err.message);
                 errorDiv.textContent = err.message;
                 errorDiv.classList.remove('hidden');
             }
@@ -3126,6 +3213,488 @@ async function loadBilderListe(m, container) {
         loadingDiv.textContent = 'Fehler: ' + err.message;
         loadingDiv.style.color = 'var(--color-error)';
     }
+}
+
+// ===== Layout-Newsletter (Etappe 2 und 3) =====
+// Der Server bereinigt text_html ohnehin; hier entstehen clientseitig nur erlaubte Tags, fremde HTML-Fassungen werden nie roh per innerHTML gesetzt.
+const LAYOUT_MAX_BILDER = 6;
+const LAYOUT_MAX_TEXT_HTML = 20000;
+const LAYOUT_ERLAUBT = new Set(['p', 'br', 'strong', 'em', 'h2', 'h3', 'ul', 'ol', 'li', 'a']);
+const LAYOUT_ALIAS = {b: 'strong', i: 'em', div: 'p'};
+const LAYOUT_VERWERFEN = new Set(['script', 'style', 'iframe', 'object', 'embed', 'noscript', 'template', 'textarea', 'title', 'head', 'svg', 'math', 'select', 'option']);
+const LAYOUT_BLOECKE = new Set(['p', 'h2', 'h3']);
+const LAYOUT_INLINE = new Set(['strong', 'em', 'a', 'br']);
+
+function layoutHrefOk(href) {
+    const w = (href || '').trim();
+    if (!w || w.length > 500 || /[\s\x00-\x1f\x7f<>"'`\\]/.test(w)) return false;
+    if (w.toLowerCase().startsWith('https://')) return w.length > 8 && !(w.split('/')[2] || '').includes('@');
+    return /^mailto:[^@\s?#]{1,64}@[A-Za-z0-9.-]{1,200}\.[A-Za-z]{2,}$/i.test(w);
+}
+
+function layoutHttpsOk(url) {
+    return (url || '').trim().toLowerCase().startsWith('https://') && url.trim().length <= 300 && layoutHrefOk(url);
+}
+
+function layoutBereinige(quelle, ziel) {
+    Array.from(quelle.childNodes).forEach(n => {
+        if (n.nodeType === 3) { ziel.appendChild(document.createTextNode(n.nodeValue)); return; }
+        if (n.nodeType !== 1) return;
+        const roh = n.tagName.toLowerCase();
+        if (LAYOUT_VERWERFEN.has(roh)) return;
+        const tag = LAYOUT_ALIAS[roh] || roh;
+        if (!LAYOUT_ERLAUBT.has(tag) || (tag === 'a' && !layoutHrefOk(n.getAttribute('href')))) {
+            layoutBereinige(n, ziel);
+            return;
+        }
+        const el = document.createElement(tag);
+        if (tag === 'a') el.setAttribute('href', n.getAttribute('href').trim());
+        if (LAYOUT_BLOECKE.has(tag) && n.getAttribute('data-ausrichtung') === 'zentriert') el.setAttribute('data-ausrichtung', 'zentriert');
+        layoutBereinige(n, el);
+        ziel.appendChild(el);
+    });
+}
+
+function layoutHtmlLaden(editor, html) {
+    const geparst = new DOMParser().parseFromString('<!doctype html><body>' + (html || ''), 'text/html');
+    const tmp = document.createElement('div');
+    layoutBereinige(geparst.body, tmp);
+    editor.textContent = '';
+    while (tmp.firstChild) editor.appendChild(tmp.firstChild);
+}
+
+function layoutHtmlLesen(editor) {
+    const tmp = document.createElement('div');
+    layoutBereinige(editor, tmp);
+    let lauf = null;
+    Array.from(tmp.childNodes).forEach(n => {
+        const inline = n.nodeType === 3 || (n.nodeType === 1 && LAYOUT_INLINE.has(n.tagName.toLowerCase()));
+        if (!inline) { lauf = null; return; }
+        if (!lauf) {
+            if (n.nodeType === 3 && !n.nodeValue.trim()) { tmp.removeChild(n); return; }
+            lauf = document.createElement('p');
+            tmp.insertBefore(lauf, n);
+        }
+        lauf.appendChild(n);
+    });
+    return {html: tmp.innerHTML, text: tmp.textContent.trim()};
+}
+
+function baueLayoutEditor(m, entwurf, holeBetreff) {
+    const wurzel = document.createElement('div');
+    wurzel.id = 'layout-gruppe';
+    let bilderListe = [];
+
+    const feldFehler = (feld) => {
+        const d = document.createElement('div');
+        d.className = 'field-error hidden';
+        d.dataset.feld = feld;
+        return d;
+    };
+    const gruppe = (beschriftung, eingabe, feld, hinweis) => {
+        const g = document.createElement('div');
+        g.className = 'form-group';
+        const l = document.createElement('label');
+        l.textContent = beschriftung;
+        g.appendChild(l);
+        g.appendChild(eingabe);
+        if (hinweis) {
+            const h = document.createElement('small');
+            h.textContent = hinweis;
+            g.appendChild(h);
+        }
+        if (feld) g.appendChild(feldFehler(feld));
+        return g;
+    };
+    const textfeld = (id, max, platzhalter) => {
+        const i = document.createElement('input');
+        i.type = 'text';
+        if (id) i.id = id;
+        i.maxLength = max;
+        if (platzhalter) i.placeholder = platzhalter;
+        return i;
+    };
+    const knopf = (text, klick, klasse) => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = klasse || 'btn btn-secondary';
+        b.textContent = text;
+        b.addEventListener('click', klick);
+        return b;
+    };
+
+    const kopf = document.createElement('h4');
+    kopf.textContent = 'Layout';
+    wurzel.appendChild(kopf);
+
+    // Balken
+    const balkenText = textfeld('layout-balken-text', 60);
+    balkenText.value = entwurf && entwurf.blocks ? entwurf.blocks.balken.text : '';
+    wurzel.appendChild(gruppe('Balken: Text (optional)', balkenText, 'balken.text', '0-60 Zeichen'));
+    const balkenUrl = textfeld('layout-balken-url', 300, 'https://...');
+    balkenUrl.value = entwurf && entwurf.blocks && entwurf.blocks.balken.url ? entwurf.blocks.balken.url : '';
+    wurzel.appendChild(gruppe('Balken: Link (optional)', balkenUrl, 'balken.url', 'nur https://'));
+
+    // Text mit Formatleiste
+    const editor = document.createElement('div');
+    editor.id = 'layout-text';
+    editor.setAttribute('contenteditable', 'true');
+    editor.setAttribute('role', 'textbox');
+    editor.setAttribute('aria-multiline', 'true');
+    editor.setAttribute('aria-label', 'Text');
+    editor.style.minHeight = '12rem';
+    editor.style.padding = '0.5rem';
+    editor.style.border = '1px solid var(--color-border)';
+    editor.style.borderRadius = '4px';
+    editor.style.background = '#fff';
+    layoutHtmlLaden(editor, entwurf && entwurf.blocks ? entwurf.blocks.text_html : '');
+
+    const fokussieren = () => {
+        const sel = document.getSelection();
+        if (!(sel && sel.anchorNode && editor.contains(sel.anchorNode))) editor.focus();
+    };
+    const befehl = (name, arg) => {
+        fokussieren();
+        if (typeof document.execCommand === 'function') document.execCommand(name, false, arg);
+    };
+    const blockVon = (knoten) => {
+        while (knoten && knoten !== editor && !(knoten.nodeType === 1 && LAYOUT_BLOECKE.has(knoten.tagName.toLowerCase()))) knoten = knoten.parentNode;
+        return knoten && knoten !== editor ? knoten : null;
+    };
+    const zentrieren = () => {
+        const sel = document.getSelection();
+        const anker = sel && sel.anchorNode && editor.contains(sel.anchorNode) ? sel.anchorNode : null;
+        let block = blockVon(anker);
+        fokussieren();
+        if (!block) {
+            befehl('formatBlock', 'p');
+            const danach = document.getSelection();
+            block = blockVon(danach && danach.anchorNode && editor.contains(danach.anchorNode) ? danach.anchorNode : null);
+        }
+        if (!block) return;
+        if (block.getAttribute('data-ausrichtung') === 'zentriert') block.removeAttribute('data-ausrichtung');
+        else block.setAttribute('data-ausrichtung', 'zentriert');
+    };
+
+    const leiste = document.createElement('div');
+    leiste.id = 'layout-leiste';
+    leiste.setAttribute('role', 'toolbar');
+    leiste.style.display = 'flex';
+    leiste.style.flexWrap = 'wrap';
+    leiste.style.gap = '0.25rem';
+    leiste.style.marginBottom = '0.5rem';
+    const linkEingabe = textfeld('layout-link-url', 500, 'https://... oder mailto:...');
+    const linkFehler = feldFehler('text_html');
+    [
+        ['Fett', () => befehl('bold')],
+        ['Kursiv', () => befehl('italic')],
+        ['Absatz', () => befehl('formatBlock', 'p')],
+        ['Überschrift 2', () => befehl('formatBlock', 'h2')],
+        ['Überschrift 3', () => befehl('formatBlock', 'h3')],
+        ['Liste', () => befehl('insertUnorderedList')],
+        ['Nummerierte Liste', () => befehl('insertOrderedList')],
+        ['Zentriert', zentrieren],
+        ['Link setzen', () => {
+            if (!layoutHrefOk(linkEingabe.value)) {
+                linkFehler.textContent = 'Link: nur https:// oder mailto: erlaubt';
+                linkFehler.classList.remove('hidden');
+                return;
+            }
+            linkFehler.classList.add('hidden');
+            befehl('createLink', linkEingabe.value.trim());
+        }],
+        ['Link entfernen', () => befehl('unlink')],
+    ].forEach(([text, aktion]) => {
+        const b = knopf(text, aktion, 'btn btn-secondary btn-small');
+        b.addEventListener('mousedown', e => e.preventDefault());
+        leiste.appendChild(b);
+    });
+    leiste.appendChild(linkEingabe);
+
+    const textGruppe = document.createElement('div');
+    textGruppe.className = 'form-group';
+    const textLabel = document.createElement('label');
+    textLabel.textContent = 'Text *';
+    textGruppe.appendChild(textLabel);
+    textGruppe.appendChild(leiste);
+    textGruppe.appendChild(linkFehler);
+    textGruppe.appendChild(editor);
+    const textHinweis = document.createElement('small');
+    textHinweis.textContent = 'Erlaubt: Fett, Kursiv, Überschriften, Listen, Links (https/mailto), Zentrierung. Keine Bilder, Farben oder Stile im Text.';
+    textGruppe.appendChild(textHinweis);
+    textGruppe.appendChild(feldFehler('text_html'));
+    wurzel.appendChild(textGruppe);
+
+    // Bilder
+    const bilderTitel = document.createElement('h4');
+    bilderTitel.textContent = 'Bilder (rechts neben dem Text)';
+    wurzel.appendChild(bilderTitel);
+    const platzListe = document.createElement('div');
+    platzListe.id = 'layout-bilder';
+    wurzel.appendChild(platzListe);
+    const bilderFehler = feldFehler('bilder');
+    wurzel.appendChild(bilderFehler);
+    const zaehler = document.createElement('small');
+    zaehler.id = 'layout-bilder-zaehler';
+    const hinzu = knopf('Bild hinzufügen', () => neuerPlatz({}), 'btn btn-secondary');
+    hinzu.id = 'layout-bild-hinzufuegen';
+    const bilderZeile = document.createElement('div');
+    bilderZeile.style.margin = '0.5rem 0 1rem';
+    bilderZeile.appendChild(hinzu);
+    bilderZeile.appendChild(document.createTextNode(' '));
+    bilderZeile.appendChild(zaehler);
+    wurzel.appendChild(bilderZeile);
+
+    const optionenFuellen = (select, gewaehlt) => {
+        select.textContent = '';
+        const leer = document.createElement('option');
+        leer.value = '';
+        leer.textContent = 'Bild wählen...';
+        select.appendChild(leer);
+        let gefunden = gewaehlt === null || gewaehlt === undefined;
+        bilderListe.forEach(b => {
+            const o = document.createElement('option');
+            o.value = String(b.id);
+            o.textContent = b.alt + ' (#' + b.id + ')';
+            if (b.id === gewaehlt) { o.selected = true; gefunden = true; }
+            select.appendChild(o);
+        });
+        if (!gefunden) {
+            const o = document.createElement('option');
+            o.value = String(gewaehlt);
+            o.textContent = 'Bild #' + gewaehlt;
+            o.selected = true;
+            select.appendChild(o);
+        }
+    };
+    const platzAktualisieren = () => {
+        const plaetze = platzListe.querySelectorAll('.layout-bild');
+        plaetze.forEach((p, i) => {
+            p.querySelector('.layout-bild-titel').textContent = 'Bild ' + (i + 1);
+            p.querySelectorAll('[data-teil]').forEach(d => { d.dataset.feld = 'bilder[' + i + ']' + (d.dataset.teil ? '.' + d.dataset.teil : ''); });
+        });
+        hinzu.disabled = plaetze.length >= LAYOUT_MAX_BILDER;
+        zaehler.textContent = 'Bilder: ' + plaetze.length + ' von ' + LAYOUT_MAX_BILDER;
+    };
+    function neuerPlatz(daten) {
+        if (platzListe.querySelectorAll('.layout-bild').length >= LAYOUT_MAX_BILDER) return null;
+        const p = document.createElement('div');
+        p.className = 'layout-bild';
+        p.style.border = '1px solid var(--color-border)';
+        p.style.borderRadius = '6px';
+        p.style.padding = '0.75rem';
+        p.style.marginBottom = '0.75rem';
+        const titel = document.createElement('strong');
+        titel.className = 'layout-bild-titel';
+        p.appendChild(titel);
+
+        const teilFehler = (teil) => { const d = feldFehler(''); d.dataset.teil = teil; return d; };
+        const select = document.createElement('select');
+        select.className = 'layout-bild-auswahl';
+        optionenFuellen(select, daten.bild_id);
+        const vorschau = document.createElement('img');
+        vorschau.className = 'layout-bild-vorschau';
+        vorschau.style.maxWidth = '120px';
+        vorschau.style.display = 'block';
+        vorschau.style.marginTop = '0.5rem';
+        const bildZeigen = () => {
+            const b = bilderListe.find(x => String(x.id) === select.value);
+            if (b) { vorschau.src = b.url; vorschau.alt = b.alt; vorschau.style.display = 'block'; }
+            else { vorschau.removeAttribute('src'); vorschau.style.display = 'none'; }
+        };
+        const alt = textfeld(null, 150);
+        alt.className = 'layout-bild-alt';
+        alt.required = true;
+        alt.value = daten.alt || '';
+        select.addEventListener('change', () => {
+            bildZeigen();
+            const b = bilderListe.find(x => String(x.id) === select.value);
+            if (b && !alt.value.trim()) alt.value = b.alt;
+        });
+        const unterschrift = textfeld(null, 200);
+        unterschrift.className = 'layout-bild-unterschrift';
+        unterschrift.value = daten.bildunterschrift || '';
+        const url = textfeld(null, 300, 'https://...');
+        url.className = 'layout-bild-url';
+        url.value = daten.url || '';
+
+        const gSelect = gruppe('Bild *', select, null);
+        gSelect.appendChild(vorschau);
+        gSelect.appendChild(teilFehler('bild_id'));
+        p.appendChild(gSelect);
+        const gAlt = gruppe('Alternativtext * (1-150 Zeichen)', alt, null);
+        gAlt.appendChild(teilFehler('alt'));
+        p.appendChild(gAlt);
+        const gUnter = gruppe('Bildunterschrift (optional, 0-200 Zeichen)', unterschrift, null);
+        gUnter.appendChild(teilFehler('bildunterschrift'));
+        p.appendChild(gUnter);
+        const gUrl = gruppe('Link (optional, nur https://)', url, null);
+        gUrl.appendChild(teilFehler('url'));
+        p.appendChild(gUrl);
+        const entfernen = knopf('Bild entfernen', () => { p.remove(); platzAktualisieren(); });
+        entfernen.className = 'btn btn-secondary layout-bild-entfernen';
+        p.appendChild(entfernen);
+        p.appendChild(teilFehler(''));
+
+        platzListe.appendChild(p);
+        bildZeigen();
+        platzAktualisieren();
+        return p;
+    }
+    const gespeicherteBilder = entwurf && entwurf.blocks ? entwurf.blocks.bilder : [];
+    gespeicherteBilder.forEach(b => neuerPlatz(b));
+    platzAktualisieren();
+
+    // Fehleranzeige am Feld
+    const fehlerLoeschen = () => {
+        wurzel.querySelectorAll('[data-feld]').forEach(d => { d.textContent = ''; d.classList.add('hidden'); });
+        wurzel.querySelectorAll('[aria-invalid]').forEach(e => e.removeAttribute('aria-invalid'));
+    };
+    const fehlerZeigen = (feld, meldung) => {
+        const alle = Array.from(wurzel.querySelectorAll('[data-feld]'));
+        const kandidaten = [feld, (feld || '').replace(/\.[a-z_]+$/, ''), (feld || '').replace(/\[\d+\].*$/, '')];
+        for (const k of kandidaten) {
+            const d = alle.find(x => x.dataset.feld === k);
+            if (d) {
+                d.textContent = meldung;
+                d.classList.remove('hidden');
+                const eingabe = d.previousElementSibling;
+                if (eingabe && /^(INPUT|SELECT)$/.test(eingabe.tagName)) eingabe.setAttribute('aria-invalid', 'true');
+                return true;
+            }
+        }
+        return false;
+    };
+
+    // Blöcke einsammeln und clientseitig prüfen
+    const blocksLesen = () => {
+        const fehler = [];
+        const bt = balkenText.value.trim();
+        const bu = balkenUrl.value.trim();
+        if (bu && !layoutHttpsOk(bu)) fehler.push({feld: 'balken.url', meldung: 'Der Link muss eine https-Adresse sein'});
+        const gelesen = layoutHtmlLesen(editor);
+        if (!gelesen.text) fehler.push({feld: 'text_html', meldung: 'Der Text darf nicht leer sein'});
+        if (gelesen.html.length > LAYOUT_MAX_TEXT_HTML) fehler.push({feld: 'text_html', meldung: 'Der Text ist zu lang (höchstens ' + LAYOUT_MAX_TEXT_HTML + ' Zeichen)'});
+        const bilder = [];
+        platzListe.querySelectorAll('.layout-bild').forEach((p, i) => {
+            const id = parseInt(p.querySelector('.layout-bild-auswahl').value, 10);
+            const a = p.querySelector('.layout-bild-alt').value.trim();
+            const u = p.querySelector('.layout-bild-unterschrift').value.trim();
+            const l = p.querySelector('.layout-bild-url').value.trim();
+            if (Number.isNaN(id)) fehler.push({feld: 'bilder[' + i + '].bild_id', meldung: 'Bitte ein Bild wählen'});
+            if (!a || a.length > 150) fehler.push({feld: 'bilder[' + i + '].alt', meldung: 'Alternativtext fehlt (1-150 Zeichen)'});
+            if (u.length > 200) fehler.push({feld: 'bilder[' + i + '].bildunterschrift', meldung: 'Bildunterschrift: höchstens 200 Zeichen'});
+            if (l && !layoutHttpsOk(l)) fehler.push({feld: 'bilder[' + i + '].url', meldung: 'Der Link muss eine https-Adresse sein'});
+            bilder.push({bild_id: Number.isNaN(id) ? null : id, alt: a, bildunterschrift: u, url: l || null});
+        });
+        return {
+            blocks: {version: 1, balken: {text: bt, url: bu || null}, text_html: gelesen.html, bilder},
+            fehler,
+        };
+    };
+
+    // Vorschau (Etappe 3)
+    const vorschauBereich = document.createElement('div');
+    vorschauBereich.id = 'layout-vorschau';
+    vorschauBereich.style.marginTop = '1rem';
+    const vorschauKopf = document.createElement('h4');
+    vorschauKopf.textContent = 'Vorschau';
+    vorschauBereich.appendChild(vorschauKopf);
+    const vorschauAktion = document.createElement('div');
+    const vorschauKnopf = knopf('Vorschau aktualisieren', () => vorschauLaden(), 'btn btn-secondary');
+    vorschauKnopf.id = 'layout-vorschau-btn';
+    vorschauAktion.appendChild(vorschauKnopf);
+    const textKnopf = knopf('Text-Fassung anzeigen', () => {
+        textAnsicht.classList.toggle('hidden');
+        textKnopf.textContent = textAnsicht.classList.contains('hidden') ? 'Text-Fassung anzeigen' : 'Text-Fassung ausblenden';
+    }, 'btn btn-secondary');
+    textKnopf.id = 'layout-vorschau-text-btn';
+    textKnopf.classList.add('hidden');
+    vorschauAktion.appendChild(document.createTextNode(' '));
+    vorschauAktion.appendChild(textKnopf);
+    vorschauBereich.appendChild(vorschauAktion);
+    const vorschauFehler = document.createElement('div');
+    vorschauFehler.id = 'layout-vorschau-fehler';
+    vorschauFehler.className = 'error hidden';
+    vorschauBereich.appendChild(vorschauFehler);
+    const warnungen = document.createElement('ul');
+    warnungen.id = 'layout-vorschau-warnungen';
+    vorschauBereich.appendChild(warnungen);
+    const rahmenHalter = document.createElement('div');
+    rahmenHalter.id = 'layout-vorschau-halter';
+    vorschauBereich.appendChild(rahmenHalter);
+    const textAnsicht = document.createElement('pre');
+    textAnsicht.id = 'layout-vorschau-text';
+    textAnsicht.className = 'hidden';
+    textAnsicht.style.whiteSpace = 'pre-wrap';
+    vorschauBereich.appendChild(textAnsicht);
+    wurzel.appendChild(vorschauBereich);
+
+    async function vorschauLaden() {
+        fehlerLoeschen();
+        vorschauFehler.classList.add('hidden');
+        const gelesen = blocksLesen();
+        if (gelesen.fehler.length) {
+            zeigeClientFehler(gelesen.fehler);
+            return;
+        }
+        const body = {blocks: gelesen.blocks};
+        const betreff = (holeBetreff() || '').trim();
+        if (betreff) body.betreff = betreff;
+        try {
+            const erg = await apiCall(`/mandanten/${m.id}/entwuerfe/vorschau`, {method: 'POST', body: JSON.stringify(body)});
+            let rahmen = document.getElementById('layout-vorschau-frame');
+            if (!rahmen) {
+                rahmen = document.createElement('iframe');
+                rahmen.id = 'layout-vorschau-frame';
+                rahmen.setAttribute('sandbox', '');
+                rahmen.title = 'Vorschau des Newsletters';
+                rahmen.style.width = '100%';
+                rahmen.style.height = '600px';
+                rahmen.style.border = '1px solid var(--color-border)';
+                rahmenHalter.appendChild(rahmen);
+            }
+            rahmen.srcdoc = erg.html;
+            warnungen.textContent = '';
+            (erg.warnungen || []).forEach(w => {
+                const li = document.createElement('li');
+                li.textContent = typeof w === 'string' ? w : (w.meldung || JSON.stringify(w));
+                warnungen.appendChild(li);
+            });
+            textAnsicht.textContent = erg.text || '';
+            textKnopf.classList.remove('hidden');
+        } catch (err) {
+            if (!err.feld || !fehlerZeigen(err.feld, err.message)) {
+                vorschauFehler.textContent = err.message;
+                vorschauFehler.classList.remove('hidden');
+            }
+        }
+    }
+    const zeigeClientFehler = (liste) => {
+        liste.forEach(f => fehlerZeigen(f.feld, f.meldung));
+    };
+
+    return {
+        el: wurzel,
+        blocksLesen,
+        fehlerLoeschen,
+        fehlerZeigen,
+        zeigeClientFehler,
+        setzeBilderListe(liste) {
+            bilderListe = liste || [];
+            platzListe.querySelectorAll('.layout-bild').forEach(p => {
+                const s = p.querySelector('.layout-bild-auswahl');
+                const gewaehlt = parseInt(s.value, 10);
+                optionenFuellen(s, Number.isNaN(gewaehlt) ? null : gewaehlt);
+                const b = bilderListe.find(x => x.id === gewaehlt);
+                const v = p.querySelector('.layout-bild-vorschau');
+                if (b) { v.src = b.url; v.alt = b.alt; v.style.display = 'block'; }
+            });
+        },
+        async ladeBilder() {
+            this.setzeBilderListe(await apiCall(`/mandanten/${m.id}/bilder`));
+        },
+    };
 }
 
 // Initialisierung
