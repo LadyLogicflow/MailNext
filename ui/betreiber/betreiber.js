@@ -1809,7 +1809,7 @@ async function renderNewsletterEditor(m, entwurfId) {
             const testmailBtn = document.createElement('button');
             testmailBtn.type = 'button';
             testmailBtn.className = 'btn btn-secondary';
-            testmailBtn.textContent = 'Testmail senden';
+            testmailBtn.textContent = 'Testmail an Testliste';
             testmailBtn.addEventListener('click', () => sendTestmail(m, entwurfId));
             actions.appendChild(testmailBtn);
 
@@ -1939,15 +1939,20 @@ async function renderNewsletterEditor(m, entwurfId) {
         }
 
         async function sendTestmail(mandant, eid) {
-            const an = prompt('Testmail an (leer = an Ihre eigene Adresse; sonst nur Adressen aus der Testliste):');
-            if (an === null) return;
-
             try {
-                await apiCall(`/mandanten/${mandant.id}/entwuerfe/${eid}/testmail`, {
+                const result = await apiCall(`/mandanten/${mandant.id}/entwuerfe/${eid}/testmail`, {
                     method: 'POST',
-                    body: JSON.stringify({an: an.trim() || null})
+                    body: JSON.stringify({})
                 });
-                showToast('Testmail versendet', 'success');
+
+                // Ergebnisse anzeigen
+                if (result.status === 'gesendet') {
+                    showToast(`Testmail versendet an ${result.gesendet} Adresse(n)`, 'success');
+                } else if (result.status === 'teilweise') {
+                    const fehlgeschlagen = result.ergebnisse.filter(e => e.ergebnis === 'fehler');
+                    const fehlerText = fehlgeschlagen.map(e => `${e.adresse}: ${e.grund || 'Fehler'}`).join(', ');
+                    showToast(`Teilweise: ${result.gesendet} OK, ${result.fehler} Fehler. ${fehlerText}`, 'error');
+                }
                 renderNewsletterEditor(mandant, eid);
             } catch (err) {
                 alert('Fehler: ' + err.message);
