@@ -1155,6 +1155,7 @@ async function renderNewsletter(m) {
 }
 
 // Testlisten-Verwaltung
+// Backend: GET /api/v1/betreiber/mandanten/<id>/testliste liefert {"adressen": […]} (betreiber.py Z. 419)
 async function renderTestliste(m, card) {
     const subtitle = document.createElement('h3');
     subtitle.textContent = 'Testliste';
@@ -1180,7 +1181,7 @@ async function renderTestliste(m, card) {
         const data = await apiCall(`/mandanten/${m.id}/testliste`);
         loadingDiv.remove();
 
-        const adressen = data.testliste || [];
+        const adressen = data.adressen || [];
         renderTestlisteUI(m, testlisteContainer, adressen);
     } catch (err) {
         loadingDiv.textContent = 'Fehler beim Laden der Testliste: ' + err.message;
@@ -1246,9 +1247,11 @@ function renderTestlisteUI(m, container, adressen) {
         }
 
         const neueAdressen = [...adressen, email];
-        await saveTestliste(m, neueAdressen, container);
-        emailInput.value = '';
-        addBtn.disabled = true;
+        const success = await saveTestliste(m, neueAdressen, container);
+        if (success) {
+            emailInput.value = '';
+            addBtn.disabled = true;
+        }
     };
 
     addBtn.addEventListener('click', addEmail);
@@ -1312,6 +1315,7 @@ function renderTestlisteUI(m, container, adressen) {
     }
 }
 
+// Backend: PUT /api/v1/betreiber/mandanten/<id>/testliste erwartet {"adressen": […]} (betreiber.py Z. 427)
 async function saveTestliste(m, adressen, container) {
     const errorDiv = document.getElementById('testliste-error');
     errorDiv.className = 'error hidden';
@@ -1319,15 +1323,17 @@ async function saveTestliste(m, adressen, container) {
     try {
         await apiCall(`/mandanten/${m.id}/testliste`, {
             method: 'PUT',
-            body: JSON.stringify({ testliste: adressen })
+            body: JSON.stringify({ adressen: adressen })
         });
 
         showToast('Testliste erfolgreich gespeichert', 'success');
         renderTestlisteUI(m, container, adressen);
+        return true;
     } catch (err) {
         errorDiv.textContent = err.message;
         errorDiv.className = 'error';
         showToast('Fehler beim Speichern: ' + err.message, 'error');
+        return false;
     }
 }
 
