@@ -134,7 +134,7 @@ def _bild_html(mandant: dict, bild: dict) -> str:
     return '<tr><td style="padding:0 0 18px">%s%s</td></tr>' % (img, unterschrift)
 
 
-def html_rendern(mandant: dict, betreff: str, blocks: dict, einstellungen_url: str, ansicht_url: str | None = None) -> str:
+def html_rendern(mandant: dict, betreff: str, blocks: dict, einstellungen_url: str | None, ansicht_url: str | None = None) -> str:
     """Vollständiges Mail-HTML des Layout-Newsletters. ``blocks`` müssen aus ``pruefen`` stammen (bereinigt)."""
     d = mandant["design"]
     primaer = d["farbe_primaer"]
@@ -172,9 +172,13 @@ def html_rendern(mandant: dict, betreff: str, blocks: dict, einstellungen_url: s
                         '</tr></table></td></tr>' % (d["farbe_text"], text_html, bild_zeilen))
     else:
         inhalt_zeile = '<tr><td class="txt" style="padding:24px;font-size:16px;color:%s">%s</td></tr>' % (d["farbe_text"], text_html)
-    fuss = ('<p style="margin:0 0 8px">Sie erhalten diese Mail, weil Sie sich zum Newsletter angemeldet haben. '
-            '<a href="%s" style="color:%s">Einstellungen ändern oder abmelden</a></p>%s'
-            % (html.escape(einstellungen_url, quote=True), primaer, mailer._fusszeile_html(mandant)))
+    if einstellungen_url:
+        fuss = ('<p style="margin:0 0 8px">Sie erhalten diese Mail, weil Sie sich zum Newsletter angemeldet haben. '
+                '<a href="%s" style="color:%s">Einstellungen ändern oder abmelden</a></p>%s'
+                % (html.escape(einstellungen_url, quote=True), primaer, mailer._fusszeile_html(mandant)))
+    else:                                                    # Browser-Ansicht: für alle gleich, deshalb kein persönlicher Link
+        fuss = ('<p style="margin:0 0 8px">Zum Abmelden oder Ändern Ihrer Einstellungen nutzen Sie bitte den Link in Ihrer E-Mail.</p>%s'
+                % mailer._fusszeile_html(mandant))
     return ('<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
             '<meta name="color-scheme" content="light dark"><meta name="supported-color-schemes" content="light dark"><title>%s</title>'
             '<style>'

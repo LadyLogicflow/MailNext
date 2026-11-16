@@ -7,6 +7,7 @@ from flask import Blueprint, Response, jsonify, make_response, request
 import abonnenten
 import bilder
 import config
+import newsletter
 import mandanten
 import seiten
 from abonnenten import BereitsAbgemeldet, FormFehler, TokenAbgelaufen, TokenUngueltig
@@ -219,4 +220,21 @@ def bild(slug, dateiname):
     antwort.headers["Content-Disposition"] = "inline"
     antwort.headers["Content-Security-Policy"] = "default-src 'none'; sandbox"
     antwort.headers["Cross-Origin-Resource-Policy"] = "cross-origin"
+    return antwort
+
+
+@bp.get("/<slug>/newsletter/ansicht/<kennung>")
+def newsletter_ansicht(slug, kennung):
+    """'Im Browser ansehen': der Layout-Newsletter als Webseite, dauerhaft erreichbar, ohne Anmeldung. Die Kennung ist die Berechtigung (nicht zu erraten); die Seite ist für alle
+    gleich (keine persönlichen Links), ohne Skripte, ohne Tracking, nicht für Suchmaschinen."""
+    seite = newsletter.ansicht_html(slug, kennung)
+    if seite is None:
+        return Response("Nicht gefunden", status=404, mimetype="text/plain")
+    antwort = Response(seite, status=200, mimetype="text/html")
+    antwort.headers["Content-Security-Policy"] = ("default-src 'none'; img-src https: http:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; "
+                                                 "frame-ancestors 'none'")
+    antwort.headers["X-Content-Type-Options"] = "nosniff"
+    antwort.headers["Referrer-Policy"] = "no-referrer"
+    antwort.headers["X-Robots-Tag"] = "noindex, nofollow"
+    antwort.headers["Cache-Control"] = "private, max-age=300"
     return antwort

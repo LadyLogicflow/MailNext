@@ -68,7 +68,7 @@ def text_zu_html(text: str) -> str:
     return "\n".join(absaetze)
 
 
-def darstellen(mandant: dict, betreff: str, text: str, persoenliches_token: str | None, blocks: dict | None = None):
+def darstellen(mandant: dict, betreff: str, text: str, persoenliches_token: str | None, blocks: dict | None = None, ansicht_token: str | None = None):
     """(Betreff, Text, HTML, Kopfzeilen). Ohne Token (Testmail, Vorschau) zeigen die Links auf eine ungültige Vorschau."""
     token = persoenliches_token or "u1.vorschau.vorschau"
     einstellungen = mailer.link_einstellungen(mandant, token)
@@ -79,11 +79,74 @@ def darstellen(mandant: dict, betreff: str, text: str, persoenliches_token: str 
                  '<a href="%s" style="color:%s">Einstellungen ändern oder abmelden</a></p>' % (html.escape(einstellungen, quote=True), farbe))
     if blocks is not None:                                    # Layout-Newsletter (Etappe 2): text ist die abgeleitete Klartext-Fassung
         import layout
-        html_text = layout.html_rendern(mandant, betreff, blocks, einstellungen)
+        ansicht = ansicht_adresse(mandant, ansicht_token or "vorschau")          # ohne gespeicherten Entwurf (Vorschau): Platzhalter-Link
+        html_text = layout.html_rendern(mandant, betreff, blocks, einstellungen, ansicht)
+        text = "Im Browser ansehen: %s\n\n%s" % (ansicht, text.strip())
     else:
         html_text = mailer.html_rahmen(mandant, betreff, text_zu_html(text) + fuss_html)
     header = {"List-Unsubscribe": "<%s>" % eins_klick, "List-Unsubscribe-Post": "List-Unsubscribe=One-Click"}
     return betreff, text.strip() + fuss_text, html_text, header
+
+
+def ansicht_adresse(mandant: dict, kennung: str) -> str:
+    """Adresse der Browser-Ansicht ('Im Browser ansehen'): dauerhaft erreichbar, ohne Anmeldung und ohne Tracking."""
+    return "%s/%s/newsletter/ansicht/%s" % (mailer._basis(mandant), mandant["slug"], kennung)
+
+
+def _ansicht_kennung(z) -> str:
+    """Kennung der Browser-Ansicht eines Layout-Entwurfs; fehlt sie (ältere Zeile), wird sie einmalig vergeben."""
+    if z["ansicht_token"]:
+        return z["ansicht_token"]
+    import secrets
+    neu = secrets.token_urlsafe(18)
+    with db.verbindung() as c:
+        c.execute("UPDATE entwurf SET ansicht_token=? WHERE id=? AND ansicht_token IS NULL", (neu, z["id"]))
+        return c.execute("SELECT ansicht_token FROM entwurf WHERE id=?", (z["id"],)).fetchone()["ansicht_token"]
+
+
+def ansicht_html(slug: str, kennung: str) -> str | None:
+    """HTML der Browser-Ansicht für /<slug>/newsletter/ansicht/<kennung>, sonst None. Für alle gleich: ohne persönliche Links."""
+    mandant = mandanten.lesen_slug(slug)
+    if mandant is None or not isinstance(kennung, str) or not 16 <= len(kennung) <= 64:
+        return None
+    with db.verbindung() as c:
+        z = c.execute("SELECT * FROM entwurf WHERE mandant_id=? AND ansicht_token=? AND format='layout'", (mandant["id"], kennung)).fetchone()
+    if z is None:
+        return None
+    import layout
+    return layout.html_rendern(mandant, z["betreff"], _blocks_von(z), None, None)
+
+
+def layout_vorschau(mandant: dict, betreff, blocks) -> dict:
+    """Vorschau eines noch nicht gespeicherten Layout-Entwurfs: das echte Mail-HTML (dieselbe Funktion wie beim Versand) und der Klartext-Teil.
+    Speichert nichts. Wirft Fehler (400) bei ungültigen Blöcken."""
+    betreff = (betreff or "Vorschau").strip() if isinstance(betreff, str) else "Vorschau"
+    if not 1 <= len(betreff) <= 150 or "\n" in betreff or "\r" in betreff:
+        raise Fehler("betreff_ungueltig", "Der Betreff muss eine Zeile mit 1 bis 150 Zeichen sein", 400)
+    sauber, klartext = _blocks_pruefen(mandant, blocks)
+    _, text, html_text, _ = darstellen(mandant, betreff, klartext, None, blocks=sauber)
+    return {"html": html_text, "text": text, "warnungen": _warnungen(mandant, sauber), "blocks": sauber}
+
+
+def _warnungen(mandant: dict, blocks: dict) -> list:
+    d = mandant["design"]
+    w = []
+    if not d.get("logo_bild_id") and not d.get("logo_url"):
+        w.append("Es ist kein Logo hinterlegt, im Kopf steht nur der Name des Mandanten.")
+    if not d.get("firmenangaben") or not d.get("impressum_url"):
+        w.append("Die Fußzeile hat keine vollständigen Firmenangaben oder kein Impressum (Pflichtangaben).")
+    if not mailer._basis(mandant).startswith("https://"):
+        w.append("Die Basis-Adresse (%s) ist nicht https: Bilder und Links funktionieren in echten Mails nur, wenn sie von außen erreichbar ist." % mailer._basis(mandant))
+    import bilder
+    summe = 0
+    for b in blocks.get("bilder") or []:
+        info = bilder.lesen(mandant, b["bild_id"])
+        summe += info["groesse_bytes"] if info else 0
+    if summe > 1_500_000:
+        w.append("Die Bilder sind zusammen %.1f MB groß; das kann das Laden der Mail verlangsamen." % (summe / 1_000_000))
+    if not (blocks.get("balken") or {}).get("text"):
+        w.append("Es ist kein Balken gesetzt.")
+    return w
 
 
 # ----- Entwürfe -----
@@ -157,8 +220,8 @@ def _zeile(mandant_id, entwurf_id):
         return c.execute("SELECT * FROM entwurf WHERE id=? AND mandant_id=?", (int(entwurf_id), int(mandant_id))).fetchone()
 
 
-def _entwurf_dict(z) -> dict:
-    return {"id": z["id"], "betreff": z["betreff"], "format": z["format"], "blocks": _blocks_von(z), "text": z["text"], "ziel": z["ziel"],
+def _entwurf_dict(z, mandant=None) -> dict:
+    return {"ansicht_url": (ansicht_adresse(mandant, _ansicht_kennung(z)) if mandant is not None and z["format"] == "layout" else None), "id": z["id"], "betreff": z["betreff"], "format": z["format"], "blocks": _blocks_von(z), "text": z["text"], "ziel": z["ziel"],
             "segment": json.loads(z["segment"]), "status": z["status"],
             "content_hash": z["content_hash"], "erstellt": z["erstellt"], "geaendert": z["geaendert"],
             "testmail": {"gesendet_am": z["testmail_am"], "passender_stand": bool(z["testmail_hash"] and z["testmail_hash"] == z["content_hash"])}}
@@ -180,15 +243,16 @@ def anlegen(mandant: dict, betreff, text, ziel, segment, format="text", blocks=N
         blocks_json = None
     zeit = _iso(_jetzt())
     with db.verbindung() as c:
-        cur = c.execute("INSERT INTO entwurf(mandant_id, betreff, text, ziel, segment, content_hash, erstellt, geaendert, format, blocks) VALUES (?,?,?,?,?,?,?,?,?,?)",
+        import secrets
+        cur = c.execute("INSERT INTO entwurf(mandant_id, betreff, text, ziel, segment, content_hash, erstellt, geaendert, format, blocks, ansicht_token) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                         (mandant["id"], betreff, text, ziel, json.dumps(segment), _hash(betreff, text, ziel, segment, blocks if format == "layout" else None), zeit, zeit,
-                         format, blocks_json))
+                         format, blocks_json, secrets.token_urlsafe(18) if format == "layout" else None))
     return lesen(mandant, cur.lastrowid)
 
 
 def lesen(mandant: dict, entwurf_id: int) -> dict | None:
     z = _zeile(mandant["id"], entwurf_id)
-    return _entwurf_dict(z) if z else None
+    return _entwurf_dict(z, mandant) if z else None
 
 
 def liste(mandant: dict) -> list:
@@ -292,7 +356,7 @@ def testmail(mandant: dict, entwurf_id: int, an: str | None, betreiber_email: st
         raise Fehler("adresse_nicht_in_testliste", "Diese Adresse steht nicht in der Testliste", 403)
     if not schluessel.email_gueltig(ziel_adresse):
         raise Fehler("adresse_ungueltig", "Keine gültige Adresse", 400)
-    betreff, text, html_text, header = darstellen(mandant, "[TEST] " + z["betreff"], z["text"], None, blocks=_blocks_von(z))
+    betreff, text, html_text, header = darstellen(mandant, "[TEST] " + z["betreff"], z["text"], None, blocks=_blocks_von(z), ansicht_token=_ansicht_kennung(z) if z["format"] == "layout" else None)
     ergebnis = mailer.senden(mandant, ziel_adresse, betreff, text, html_text, header)
     if ergebnis not in ("gesendet", "datei"):
         raise Fehler("versand_nicht_moeglich", "Die Testmail konnte nicht gesendet werden (%s). Versandmodus und Konto des Mandanten prüfen." % ergebnis, 409)
@@ -458,7 +522,7 @@ def lauf() -> dict:
             with db.verbindung() as c:
                 if _gesendet_letzte_stunde(c, m["id"]) >= limit:
                     break
-                z = c.execute("SELECT e.*, w.ziel AS ziel, w.betreff AS betreff, w.text AS text, w.format AS format, w.blocks AS blocks FROM empfaenger e JOIN entwurf w ON w.id=e.entwurf_id "
+                z = c.execute("SELECT e.*, w.ziel AS ziel, w.betreff AS betreff, w.text AS text, w.format AS format, w.blocks AS blocks, w.ansicht_token AS ansicht_token FROM empfaenger e JOIN entwurf w ON w.id=e.entwurf_id "
                               "WHERE e.mandant_id=? AND e.status='queued' AND w.status IN ('freigegeben','sendet') AND (e.fehler IS NULL OR e.zeit<?) "
                               "ORDER BY e.id LIMIT 1",
                               (m["id"], _iso(_jetzt() - timedelta(minutes=WIEDERHOLUNG_ABSTAND_MINUTEN)))).fetchone()
@@ -489,7 +553,7 @@ def _eine_senden(m: dict, z) -> str:
             return "uebersprungen"
         adresse = abo["email"]
     token = abonnenten.persoenliches_token(abo) if abo is not None else None
-    betreff, text, html_text, header = darstellen(m, z["betreff"], z["text"], token, blocks=_blocks_von(z))
+    betreff, text, html_text, header = darstellen(m, z["betreff"], z["text"], token, blocks=_blocks_von(z), ansicht_token=z["ansicht_token"] if z["format"] == "layout" else None)
     ergebnis = mailer.senden(m, adresse, betreff, text, html_text, header)
     if ergebnis in ("gesendet", "datei"):
         _setzen(z["id"], "sent", None)

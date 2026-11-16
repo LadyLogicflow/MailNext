@@ -100,7 +100,8 @@ CREATE TABLE IF NOT EXISTS entwurf (
     freigegeben_von TEXT,
     gestoppt_am TEXT,
     format TEXT NOT NULL DEFAULT 'text',
-    blocks TEXT
+    blocks TEXT,
+    ansicht_token TEXT
 );
 -- Eine Zeile je Empfängerin und Entwurf; schluessel ist 'a<abonnent_id>' oder 't<HMAC der Testadresse>': höchstens einmal je Person und Entwurf.
 CREATE TABLE IF NOT EXISTS empfaenger (
@@ -150,6 +151,9 @@ def init(pfad: str) -> None:
             c.execute("ALTER TABLE entwurf ADD COLUMN format TEXT NOT NULL DEFAULT 'text'")
         if "blocks" not in vorhanden_e:
             c.execute("ALTER TABLE entwurf ADD COLUMN blocks TEXT")
+        if "ansicht_token" not in vorhanden_e:
+            c.execute("ALTER TABLE entwurf ADD COLUMN ansicht_token TEXT")
+        c.execute("CREATE UNIQUE INDEX IF NOT EXISTS entwurf_ansicht ON entwurf(ansicht_token)")
         vorhanden = {z["name"] for z in c.execute("PRAGMA table_info(abonnent)")}                # Datenbanken aus Fassungen vor dem Import
         for spalte in ("herkunft", "quelle", "import_am", "tags"):
             if spalte not in vorhanden:

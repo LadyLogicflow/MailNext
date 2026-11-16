@@ -50,6 +50,12 @@ Die Mail (`layout.py`) ist ein Tabellen-Layout mit 600 px: Kopf mit Logo, Balken
 Dunkelmodus per color-scheme. Der Inhalts-Hash der Freigabe bindet die Blöcke und Bild-Nummern ein (Textentwürfe behalten ihren bisherigen Hash). Bilder, die ein Entwurf nutzt, lassen sich nicht löschen (409).
 Fehlercodes mit `feld`: blocks_ungueltig, bild_unbekannt, zu_viele_bilder, alt_fehlt, url_ungueltig, format_passt_nicht, format_ungueltig.
 
+## Vorschau und "Im Browser ansehen" (ab 0.6.2)
+`POST /api/v1/betreiber/mandanten/<id>/entwuerfe/vorschau` mit `{betreff?, blocks}` liefert `{html, text, warnungen, blocks}`: das echte Mail-HTML (dieselbe Funktion wie Testmail und Versand) und den
+Klartext-Teil; es wird nichts gespeichert oder gesendet. Die Oberfläche zeigt `html` in einem iframe mit leerem `sandbox` (kein Skript). Warnungen (Texte): kein Logo, fehlende Firmenangaben/Impressum, Basis-Adresse nicht https,
+Bilder zusammen über 1,5 MB, kein Balken. Jeder Layout-Entwurf hat `ansicht_url` (`/<slug>/newsletter/ansicht/<kennung>`, Kennung zufällig, bleibt beim Ändern gleich): öffentlich, dauerhaft erreichbar, für alle gleich
+(ohne persönliche Links, ohne Skripte, ohne Tracking, `noindex`, CSP ohne Skripte). Die Mail enthält oben "Im Browser ansehen" und im Text-Teil dieselbe Adresse.
+
 ## KI-Textverbesserung (ab 0.4.0)
 Auf Klick (nie automatisch) macht Claude (Anthropic, Modell `claude-sonnet-5-5`) einen **Vorschlag** für Betreff und Text eines Newsletter-Entwurfs. Der Vorschlag wird nirgends gespeichert; der Betreiber übernimmt ihn per Klick und speichert den Entwurf wie gewohnt.
 Datenschutz: Je Mandant nur nach Aktivierung (Standard **aus**, Antwort sonst `409 funktion_nicht_aktiv`). An den Dienst gehen ausschließlich Betreff, Text, eine optionale kurze Anweisung und eine feste Systemanweisung, nie Adressen, Abonnentendaten, Mandanten-Kennung oder Betreibername. Text und Antwort stehen nie in Logs oder im Audit (nur Zeitpunkt, Mandant, Zeichenzahlen). Hinweistext für die Oberfläche: `GET /api/v1/betreiber/mandanten/<id>/ki` → `hinweis` (Wortlaut von Irony).
