@@ -386,7 +386,7 @@ class TestEditor(MN):
         e = self.entwuerfe()
         self.assertEqual(len(e), 1)
         self.assertEqual((e[0]["ziel"], json.loads(e[0]["segment"])["tags"], json.loads(e[0]["segment"])["tags_modus"]), ("abonnenten", ["Spender"], "und"))
-        self.assertIn("Testmail senden", s[2]["zustand"]["knoepfe"])                                   # danach im Editor des angelegten Entwurfs
+        self.assertIn("Testmail an Testliste", s[2]["zustand"]["knoepfe"])                             # danach im Editor des angelegten Entwurfs
         self.assertEqual(s[2]["zustand"]["vorschau"], "Empfänger: 2")                                 # UND mit einem Tag = alle mit diesem Tag (a, b)
         print("EDITOR_ANLEGEN", json.dumps(s[2]["zustand"], ensure_ascii=False))
 
@@ -408,11 +408,12 @@ class TestEditor(MN):
         self.assertEqual(self.entwuerfe(), [])
 
     def test_testmail_geht_nur_an_den_betreiber_nie_an_abonnenten(self):
-        import newsletter
+        import newsletter, testliste
         m = self.vorbereiten(echtversand=True)
+        testliste.speichern(m, ["catrin@bst-next.de"])                                              # v0.6.3: Testliste muss gefüllt sein
         newsletter.anlegen(m, "Mit Test", "Hallo https://beispiel.test/x", "abonnenten", {"tags": ["Spender"]})
-        s = self.ops([{"op": "oeffnen", "betreff": "Mit Test"}, {"op": "testmail", "an": ""}])
-        self.assertIn("POST /api/v1/betreiber/mandanten/1/entwuerfe/1/testmail 200 {\"an\":null}", s[1]["requests"])
+        s = self.ops([{"op": "oeffnen", "betreff": "Mit Test"}, {"op": "testmail"}])               # v0.6.3: kein "an"-Parameter mehr
+        self.assertIn("POST /api/v1/betreiber/mandanten/1/entwuerfe/1/testmail 200 {}", s[1]["requests"])  # v0.6.3: Body {}
         dateien = self.ausgang()
         self.assertEqual(len(dateien), 1)
         import email, email.policy
@@ -420,14 +421,15 @@ class TestEditor(MN):
         self.assertEqual(mail["To"], "catrin@bst-next.de")
         self.assertTrue(mail["Subject"].startswith("[TEST]"))
         self.assertTrue(self.entwuerfe()[0]["testmail_hash"])
-        self.assertTrue(any("prompt:" in a for a in s[1]["alerts"]))
-        print("EDITOR_TESTMAIL_PROMPT", [a for a in s[1]["alerts"] if a.startswith("prompt")])
+        # v0.6.3: kein prompt mehr, kein Alert
+        print("EDITOR_TESTMAIL_REQUESTS", s[1]["requests"])
 
     def test_freigabe_nur_mit_bestaetigung_und_aktuellem_hash(self):
-        import newsletter
+        import newsletter, testliste
         m = self.vorbereiten(echtversand=True)
+        testliste.speichern(m, ["catrin@bst-next.de"])                                              # v0.6.3: Testliste muss gefüllt sein
         newsletter.anlegen(m, "Freigabe", "Hallo https://beispiel.test/x", "abonnenten", {"tags": ["Spender"]})
-        s = self.ops([{"op": "oeffnen", "betreff": "Freigabe"}, {"op": "testmail", "an": ""}, {"op": "freigeben", "bestaetigen": False}, {"op": "freigeben", "bestaetigen": True}])
+        s = self.ops([{"op": "oeffnen", "betreff": "Freigabe"}, {"op": "testmail"}, {"op": "freigeben", "bestaetigen": False}, {"op": "freigeben", "bestaetigen": True}])
         self.assertEqual([r for r in s[2]["requests"] if "freigeben" in r], [])                      # nicht bestätigt: keine Freigabe
         self.assertTrue(any(a.startswith("confirm:") and "2 Empfänger" in a for a in s[2]["alerts"]), s[2]["alerts"])
         frei = [r for r in s[3]["requests"] if "/freigeben" in r][0]
@@ -440,16 +442,17 @@ class TestEditor(MN):
         self.assertTrue(any("freigegeben" in row[1] or "freigegeben" in " ".join(row) for row in s[3]["zustand"]["listen_zeilen"]), s[3]["zustand"])
 
     def test_nach_aenderung_ohne_neue_testmail_keine_freigabe(self):
-        import newsletter
+        import newsletter, testliste
         m = self.vorbereiten(echtversand=True)
+        testliste.speichern(m, ["catrin@bst-next.de"])                                              # v0.6.3: Testliste muss gefüllt sein
         newsletter.anlegen(m, "Aendern", "Hallo https://beispiel.test/x", "abonnenten", {"tags": ["Spender"]})
-        s = self.ops([{"op": "oeffnen", "betreff": "Aendern"}, {"op": "testmail", "an": ""}, {"op": "fuellen", "text": "Geänderter Text https://beispiel.test/y"}, {"op": "speichern"}, {"op": "freigeben"}])
+        s = self.ops([{"op": "oeffnen", "betreff": "Aendern"}, {"op": "testmail"}, {"op": "fuellen", "text": "Geänderter Text https://beispiel.test/y"}, {"op": "speichern"}, {"op": "freigeben"}])
         self.assertEqual(self.entwuerfe()[0]["status"], "entwurf")
         with db.verbindung() as c:
             self.assertEqual(c.execute("SELECT COUNT(*) FROM empfaenger").fetchone()[0], 0)
         freigabe = [r for r in s[4]["requests"] if "/freigeben" in r]
-        self.assertTrue(freigabe and " 409 " in freigabe[0], s[4])
-        self.assertTrue(any("Testmail gehört nicht zum aktuellen Stand" in a for a in s[4]["alerts"]), s[4]["alerts"])
+        self.assertTrue(freigabe and " 400 " in freigabe[0], s[4])                                  # v0.6.3: 400 statt 409
+        self.assertTrue(any("keine Testmail" in a for a in s[4]["alerts"]), s[4]["alerts"])        # v0.6.3: neue Fehlermeldung
         print("EDITOR_ALTE_TESTMAIL", s[4]["alerts"])
 
     def test_ohne_testmail_und_bei_gesperrtem_echtversand(self):
@@ -465,13 +468,14 @@ class TestEditor(MN):
         self.assertEqual(self.entwuerfe()[0]["status"], "entwurf")
 
     def test_freigegebener_entwurf_hat_keine_bearbeiten_knoepfe(self):
-        import newsletter
+        import newsletter, testliste
         m = self.vorbereiten(echtversand=True)
+        testliste.speichern(m, ["catrin@bst-next.de"])                                              # v0.6.3: Testliste muss gefüllt sein
         e = newsletter.anlegen(m, "Fertig", "Hallo https://beispiel.test/x", "abonnenten", {})
-        newsletter.testmail(m, e["id"], None, "catrin@bst-next.de")
+        newsletter.testmail(m, e["id"], "catrin@bst-next.de")                                       # v0.6.3: neuer Aufruf ohne "an"-Parameter, nur testliste
         newsletter.freigeben(m, e["id"], newsletter.lesen(m, e["id"])["content_hash"], True, "catrin@bst-next.de")
         s = self.ops([{"op": "oeffnen", "betreff": "Fertig"}])
-        self.assertNotIn("Testmail senden", s[0]["zustand"]["knoepfe"])
+        self.assertNotIn("Testmail an Testliste", s[0]["zustand"]["knoepfe"])                       # v0.6.3: neuer Knopf-Text
         self.assertNotIn("Freigeben & Versenden", s[0]["zustand"]["knoepfe"])
 
 
@@ -635,23 +639,24 @@ class TestFarben(MN):
     def test_formular_fuellung_live_anzeige_speichern_und_neu_oeffnen(self):
         self.mandant("hilo", "HILO e. V.")
         o = self.node(szenario="farben", mandant_name="HILO e. V.", neu=self.NEU)
-        standard = ["#1f3a5f", "#a3e635", "#f4f6f8", "#1f2933"]
+        standard = ["#1f3a5f", "#a3e635", "#f4f6f8", "#1f2933", "#1f3a5f"]                     # v0.6.3: +1 für balken_farbe
         v = o["vorher"]
-        self.assertEqual(v["typen"], ["color"] * 4)
+        self.assertEqual(v["typen"], ["color"] * 5)                                             # v0.6.3: 5 statt 4
         self.assertEqual(v["werte"], standard)                                                  # Farbfelder zeigen den gespeicherten Wert (#rrggbb)
         self.assertEqual(v["hex_text"], standard)                                               # Hex-Text daneben
-        self.assertEqual(v["hinweise"], ["#rrggbb"] * 4)                                        # Formathinweis
+        self.assertEqual(v["hinweise"], ["#rrggbb"] * 5)                                        # v0.6.3: 5 statt 4
         self.assertTrue(v["aktiv"])                                                             # Haken kommt aus m.aktiv
-        self.assertEqual([b for b in v["beschriftungen"] if b in ("Primärfarbe", "Akzentfarbe", "Hintergrund", "Text", "Aktiv")], ["Aktiv", "Primärfarbe", "Akzentfarbe", "Hintergrund", "Text"])
-        self.assertEqual(o["live"]["hex_text"], list(self.NEU.values()))                       # Hex-Text aktualisiert sich live
-        self.assertEqual(o["live"]["werte"], list(self.NEU.values()))
+        self.assertEqual([b for b in v["beschriftungen"] if b in ("Primärfarbe", "Akzentfarbe", "Hintergrund", "Text", "Balkenfarbe", "Aktiv")], ["Aktiv", "Primärfarbe", "Akzentfarbe", "Hintergrund", "Text", "Balkenfarbe"])  # v0.6.3: +Balkenfarbe
+        neu_werte = list(self.NEU.values())
+        self.assertEqual(o["live"]["hex_text"], neu_werte)                                     # Hex-Text aktualisiert sich live
+        self.assertEqual(o["live"]["werte"], neu_werte)
         self.assertEqual(o["put_farben"], self.NEU | {k: o["put_farben"][k] for k in o["put_farben"] if k not in self.NEU})   # Speichern schickt die Werte
         for k, w in self.NEU.items():
             self.assertEqual(o["put_farben"][k], w)
         self.assertEqual(o["toast"], "Änderungen gespeichert")
         self.assertTrue(any(r.startswith("PUT ") and r.endswith(" 200") for r in o["requests"]), o["requests"])
-        self.assertEqual(o["nachher"]["werte"], list(self.NEU.values()))                       # nach dem erneuten Öffnen stehen die gespeicherten Werte da
-        self.assertEqual(o["nachher"]["hex_text"], list(self.NEU.values()))
+        self.assertEqual(o["nachher"]["werte"], neu_werte)                                     # nach dem erneuten Öffnen stehen die gespeicherten Werte da
+        self.assertEqual(o["nachher"]["hex_text"], neu_werte)
         self.assertTrue(o["nachher"]["aktiv"])
 
     def test_inaktiver_mandant_zeigt_den_haken_aus_und_aktiver_an(self):
