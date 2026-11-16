@@ -1145,9 +1145,189 @@ async function renderNewsletter(m) {
         newBtn.addEventListener('click', () => renderNewsletterEditor(m, null));
         card.appendChild(newBtn);
 
+        // Testlisten-Verwaltung
+        await renderTestliste(m, card);
+
     } catch (err) {
         loadingDiv.textContent = 'Fehler: ' + err.message;
         loadingDiv.style.color = 'var(--color-error)';
+    }
+}
+
+// Testlisten-Verwaltung
+async function renderTestliste(m, card) {
+    const subtitle = document.createElement('h3');
+    subtitle.textContent = 'Testliste';
+    subtitle.style.marginTop = '2rem';
+    card.appendChild(subtitle);
+
+    const description = document.createElement('p');
+    description.textContent = 'E-Mail-Adressen für Test-Versendungen (max. 50)';
+    description.style.color = '#6b7280';
+    description.style.marginBottom = '1rem';
+    card.appendChild(description);
+
+    const testlisteContainer = document.createElement('div');
+    testlisteContainer.id = 'testliste-container';
+    card.appendChild(testlisteContainer);
+
+    const loadingDiv = document.createElement('div');
+    loadingDiv.className = 'loading';
+    loadingDiv.textContent = 'Lade Testliste...';
+    testlisteContainer.appendChild(loadingDiv);
+
+    try {
+        const data = await apiCall(`/mandanten/${m.id}/testliste`);
+        loadingDiv.remove();
+
+        const adressen = data.testliste || [];
+        renderTestlisteUI(m, testlisteContainer, adressen);
+    } catch (err) {
+        loadingDiv.textContent = 'Fehler beim Laden der Testliste: ' + err.message;
+        loadingDiv.style.color = 'var(--color-error)';
+    }
+}
+
+function renderTestlisteUI(m, container, adressen) {
+    container.innerHTML = '';
+
+    // Empfänger-Zähler
+    const counter = document.createElement('div');
+    counter.id = 'testliste-counter';
+    counter.textContent = `Empfänger: ${adressen.length}`;
+    counter.style.marginBottom = '1rem';
+    counter.style.fontWeight = 'bold';
+    container.appendChild(counter);
+
+    // Eingabefeld + Button
+    const inputGroup = document.createElement('div');
+    inputGroup.style.display = 'flex';
+    inputGroup.style.gap = '0.5rem';
+    inputGroup.style.marginBottom = '1rem';
+
+    const emailInput = document.createElement('input');
+    emailInput.type = 'email';
+    emailInput.id = 'testliste-email-input';
+    emailInput.placeholder = 'E-Mail-Adresse eingeben';
+    emailInput.style.flex = '1';
+    emailInput.style.padding = '0.5rem';
+    emailInput.style.border = '1px solid var(--color-border)';
+    emailInput.style.borderRadius = '0.25rem';
+
+    const addBtn = document.createElement('button');
+    addBtn.type = 'button';
+    addBtn.className = 'btn btn-primary';
+    addBtn.textContent = 'Hinzufügen';
+    addBtn.disabled = true;
+
+    // Live-Validierung
+    emailInput.addEventListener('input', () => {
+        const email = emailInput.value.trim();
+        const isValid = email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+        addBtn.disabled = !isValid;
+        emailInput.style.borderColor = email && !isValid ? 'var(--color-error)' : 'var(--color-border)';
+    });
+
+    // Hinzufügen
+    const addEmail = async () => {
+        const email = emailInput.value.trim().toLowerCase();
+        if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+            return;
+        }
+
+        if (adressen.includes(email)) {
+            showToast('E-Mail-Adresse ist bereits in der Testliste', 'error');
+            return;
+        }
+
+        if (adressen.length >= 50) {
+            showToast('Maximal 50 Adressen erlaubt', 'error');
+            return;
+        }
+
+        const neueAdressen = [...adressen, email];
+        await saveTestliste(m, neueAdressen, container);
+        emailInput.value = '';
+        addBtn.disabled = true;
+    };
+
+    addBtn.addEventListener('click', addEmail);
+    emailInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            addEmail();
+        }
+    });
+
+    inputGroup.appendChild(emailInput);
+    inputGroup.appendChild(addBtn);
+    container.appendChild(inputGroup);
+
+    // Fehlermeldung
+    const errorDiv = document.createElement('div');
+    errorDiv.id = 'testliste-error';
+    errorDiv.className = 'error hidden';
+    container.appendChild(errorDiv);
+
+    // Liste der Adressen
+    if (adressen.length > 0) {
+        const list = document.createElement('ul');
+        list.style.listStyle = 'none';
+        list.style.padding = '0';
+        list.style.margin = '0';
+
+        adressen.forEach(email => {
+            const item = document.createElement('li');
+            item.style.display = 'flex';
+            item.style.justifyContent = 'space-between';
+            item.style.alignItems = 'center';
+            item.style.padding = '0.5rem';
+            item.style.borderBottom = '1px solid var(--color-border)';
+
+            const emailSpan = document.createElement('span');
+            emailSpan.textContent = email;
+            item.appendChild(emailSpan);
+
+            const deleteBtn = document.createElement('button');
+            deleteBtn.type = 'button';
+            deleteBtn.className = 'btn btn-secondary';
+            deleteBtn.textContent = 'Löschen';
+            deleteBtn.style.padding = '0.25rem 0.75rem';
+            deleteBtn.style.fontSize = '0.875rem';
+            deleteBtn.addEventListener('click', async () => {
+                const neueAdressen = adressen.filter(a => a !== email);
+                await saveTestliste(m, neueAdressen, container);
+            });
+            item.appendChild(deleteBtn);
+
+            list.appendChild(item);
+        });
+
+        container.appendChild(list);
+    } else {
+        const empty = document.createElement('p');
+        empty.textContent = 'Noch keine Adressen in der Testliste.';
+        empty.style.color = '#6b7280';
+        container.appendChild(empty);
+    }
+}
+
+async function saveTestliste(m, adressen, container) {
+    const errorDiv = document.getElementById('testliste-error');
+    errorDiv.className = 'error hidden';
+
+    try {
+        await apiCall(`/mandanten/${m.id}/testliste`, {
+            method: 'PUT',
+            body: JSON.stringify({ testliste: adressen })
+        });
+
+        showToast('Testliste erfolgreich gespeichert', 'success');
+        renderTestlisteUI(m, container, adressen);
+    } catch (err) {
+        errorDiv.textContent = err.message;
+        errorDiv.className = 'error';
+        showToast('Fehler beim Speichern: ' + err.message, 'error');
     }
 }
 
