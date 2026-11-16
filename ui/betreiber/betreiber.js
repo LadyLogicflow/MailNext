@@ -437,8 +437,23 @@ function renderMandantDetails(m) {
     const balkenFarbeLabel = document.createElement('label');
     balkenFarbeLabel.textContent = 'Balkenfarbe (Newsletter)';
     balkenFarbeGroup.appendChild(balkenFarbeLabel);
+
+    // Checkbox "Primärfarbe verwenden"
+    const balkenPrimaerCheckbox = document.createElement('input');
+    balkenPrimaerCheckbox.type = 'checkbox';
+    balkenPrimaerCheckbox.id = 'edit-balken_primaer';
+    balkenPrimaerCheckbox.checked = !m.design.balken_farbe;
+    const balkenPrimaerLabel = document.createElement('label');
+    balkenPrimaerLabel.style.display = 'block';
+    balkenPrimaerLabel.style.marginBottom = '0.5rem';
+    balkenPrimaerLabel.appendChild(balkenPrimaerCheckbox);
+    balkenPrimaerLabel.appendChild(document.createTextNode(' Primärfarbe verwenden'));
+    balkenFarbeGroup.appendChild(balkenPrimaerLabel);
+
     const balkenFarbeWrapper = document.createElement('div');
     balkenFarbeWrapper.className = 'color-input-wrapper';
+    balkenFarbeWrapper.id = 'balken-farbe-wrapper';
+    balkenFarbeWrapper.style.display = m.design.balken_farbe ? 'flex' : 'none';
     const balkenFarbeInput = document.createElement('input');
     balkenFarbeInput.type = 'color';
     balkenFarbeInput.id = 'edit-balken_farbe';
@@ -448,15 +463,16 @@ function renderMandantDetails(m) {
     balkenFarbeHex.className = 'color-hex-display';
     balkenFarbeHex.textContent = m.design.balken_farbe || m.design.farbe_primaer || '#000000';
     balkenFarbeWrapper.appendChild(balkenFarbeHex);
-    const balkenFarbeHint = document.createElement('small');
-    balkenFarbeHint.textContent = 'leer = Primärfarbe';
-    balkenFarbeHint.style.marginLeft = '0.5rem';
-    balkenFarbeHint.style.color = '#9ca3af';
-    balkenFarbeWrapper.appendChild(balkenFarbeHint);
     balkenFarbeInput.addEventListener('input', () => {
         balkenFarbeHex.textContent = balkenFarbeInput.value;
     });
     balkenFarbeGroup.appendChild(balkenFarbeWrapper);
+
+    // Toggle Farbfeld
+    balkenPrimaerCheckbox.addEventListener('change', () => {
+        balkenFarbeWrapper.style.display = balkenPrimaerCheckbox.checked ? 'none' : 'flex';
+    });
+
     farbGroup.appendChild(balkenFarbeGroup);
     form.appendChild(farbGroup);
 
@@ -747,7 +763,7 @@ function renderMandantDetails(m) {
             farbe_akzent: document.getElementById('edit-farbe_akzent').value,
             farbe_hintergrund: document.getElementById('edit-farbe_hintergrund').value,
             farbe_text: document.getElementById('edit-farbe_text').value,
-            balken_farbe: document.getElementById('edit-balken_farbe').value || '',
+            balken_farbe: document.getElementById('edit-balken_primaer').checked ? '' : document.getElementById('edit-balken_farbe').value,
             schrift: document.getElementById('edit-schrift').value,
             logo_bild_id: document.getElementById('edit-logo_bild_id').value ? parseInt(document.getElementById('edit-logo_bild_id').value) : null,
             logo_url: document.getElementById('edit-logo_url').value.trim(),
@@ -2896,6 +2912,7 @@ function renderBilderUpload(m, card) {
     section.appendChild(uploadTitle);
 
     const form = document.createElement('form');
+    form.id = 'bild-upload-form';
 
     const fileGroup = document.createElement('div');
     fileGroup.className = 'form-group';
