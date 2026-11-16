@@ -1247,9 +1247,11 @@ function renderTestlisteUI(m, container, adressen) {
         }
 
         const neueAdressen = [...adressen, email];
-        await saveTestliste(m, neueAdressen, container);
-        emailInput.value = '';
-        addBtn.disabled = true;
+        const success = await saveTestliste(m, neueAdressen, container);
+        if (success) {
+            emailInput.value = '';
+            addBtn.disabled = true;
+        }
     };
 
     addBtn.addEventListener('click', addEmail);
@@ -1326,10 +1328,12 @@ async function saveTestliste(m, adressen, container) {
 
         showToast('Testliste erfolgreich gespeichert', 'success');
         renderTestlisteUI(m, container, adressen);
+        return true;
     } catch (err) {
         errorDiv.textContent = err.message;
         errorDiv.className = 'error';
         showToast('Fehler beim Speichern: ' + err.message, 'error');
+        return false;
     }
 }
 
