@@ -10,7 +10,7 @@
     python manage.py versand-rate <slug> <1-600>        (Mails pro Stunde, Standard 100)
     python manage.py entwurf <slug> <datei> [ziel=testliste|abonnenten] [segment=<datei.json>]
                                                          (Datei: erste Zeile "Betreff: ...", dann eine Leerzeile, dann der Text; Standard-Ziel testliste)
-    python manage.py testmail <slug> <entwurf_id> [adresse]   (Adresse muss in der Testliste stehen; ohne Adresse geht sie an MAILNEXT_BETREIBER_OFFEN_EMAIL)
+    python manage.py testmail <slug> <entwurf_id> [adresse]   (ohne Adresse an die ganze Testliste; eine Adresse muss in der Testliste stehen; leere Testliste = Fehler)
     python manage.py freigeben <slug> <entwurf_id>       (zeigt Ziel und Empfängerzahl, verlangt die Empfängerzahl zur Bestätigung; gleiche Prüfungen wie die Betreiber-Schnittstelle)
     python manage.py liste                               (Mandanten mit Zahlen)
     python manage.py abonnenten <slug>                   (Adressen und Status dieses Mandanten)
@@ -131,9 +131,9 @@ def _versand_befehl(befehl: str, rest: list) -> int | None:
         print("Entwurf %d für %s angelegt (Ziel %s)" % (e["id"], m["slug"], e["ziel"]))
     elif befehl == "testmail" and len(rest) in (2, 3) and rest[1].isdigit():
         m = _mandant(rest[0])
-        newsletter.testmail(m, int(rest[1]), rest[2] if len(rest) == 3 else None, config.betreiber_offen_email())
-        db.audit("manage", "testmail_gesendet", "mandant=%s entwurf=%d" % (m["slug"], int(rest[1])))               # Adresse steht nicht im Audit
-        print("Testmail zu Entwurf %s gesendet" % rest[1])
+        erg = newsletter.testmail(m, int(rest[1]), rest[2] if len(rest) == 3 else None)
+        db.audit("manage", "testmail_gesendet", "mandant=%s entwurf=%d gesendet=%d fehler=%d" % (m["slug"], int(rest[1]), erg["gesendet"], erg["fehler"]))               # Adressen stehen nicht im Audit
+        print("Testmail zu Entwurf %s: %d gesendet, %d fehlgeschlagen" % (rest[1], erg["gesendet"], erg["fehler"]))
     elif befehl == "freigeben" and len(rest) == 2 and rest[1].isdigit():
         m = _mandant(rest[0])
         entwurf_id = int(rest[1])

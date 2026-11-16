@@ -343,26 +343,49 @@ def echtversand_setzen(mandant_id: int, freigegeben: bool, akteur: str) -> None:
 
 # ----- Testmail, Vorschau, Freigabe -----
 
-def testmail(mandant: dict, entwurf_id: int, an: str | None, betreiber_email: str) -> dict:
+def testmail(mandant: dict, entwurf_id: int, an=None, betreiber_email=None) -> dict:
+    """Testmail an die TESTLISTE des Mandanten (v0.6.3, catrin #19057): ohne ``an`` an alle Adressen der Testliste (höchstens 50), sonst nur an die genannte Teilmenge
+    (Text oder Liste von Adressen, jede muss in der Testliste stehen). Eine leere Testliste ist ein Fehler (400 testliste_leer); es gibt keinen Rückfall auf die Adresse des
+    Betreibers (``betreiber_email`` bleibt nur der alten Signatur wegen und wird nicht benutzt). Antwort: Ergebnis je Adresse und Zähler; der Stand zählt als getestet, sobald
+    mindestens eine Mail rausging."""
     z = _zeile(mandant["id"], entwurf_id)
     if z is None:
         raise Fehler("nicht_gefunden", "Entwurf nicht gefunden", 404)
     if z["status"] != "entwurf":
         raise Fehler("nicht_mehr_aenderbar", "Der Entwurf ist freigegeben")
-    if not an and not schluessel.email_gueltig(schluessel.normalisiere_email(betreiber_email)):
-        raise Fehler("empfaenger_fehlt", "Bitte eine Empfängeradresse aus der Testliste angeben (an)", 400)         # z. B. Offen-Modus ohne Standardadresse
-    ziel_adresse = schluessel.normalisiere_email(an) if an else schluessel.normalisiere_email(betreiber_email)
-    if an and ziel_adresse not in testliste(mandant):
-        raise Fehler("adresse_nicht_in_testliste", "Diese Adresse steht nicht in der Testliste", 403)
-    if not schluessel.email_gueltig(ziel_adresse):
-        raise Fehler("adresse_ungueltig", "Keine gültige Adresse", 400)
-    betreff, text, html_text, header = darstellen(mandant, "[TEST] " + z["betreff"], z["text"], None, blocks=_blocks_von(z), ansicht_token=_ansicht_kennung(z) if z["format"] == "layout" else None)
-    ergebnis = mailer.senden(mandant, ziel_adresse, betreff, text, html_text, header)
-    if ergebnis not in ("gesendet", "datei"):
-        raise Fehler("versand_nicht_moeglich", "Die Testmail konnte nicht gesendet werden (%s). Versandmodus und Konto des Mandanten prüfen." % ergebnis, 409)
+    liste_ = testliste(mandant)
+    if not liste_:
+        raise Fehler("testliste_leer", "Testliste ist leer", 400)
+    if an is None or an == "" or an == []:
+        ziele = list(liste_)
+    else:
+        angefordert = [an] if isinstance(an, str) else an
+        if not isinstance(angefordert, list) or not angefordert or len(angefordert) > 50 or any(not isinstance(a, str) for a in angefordert):
+            raise Fehler("an_ungueltig", "an muss eine Adresse oder eine Liste von höchstens 50 Adressen aus der Testliste sein", 400)
+        ziele = []
+        for a in angefordert:
+            n = schluessel.normalisiere_email(a)
+            if n not in liste_:
+                raise Fehler("adresse_nicht_in_testliste", "Diese Adresse steht nicht in der Testliste", 403)
+            if n not in ziele:
+                ziele.append(n)
+    blocks, ansicht = _blocks_von(z), (_ansicht_kennung(z) if z["format"] == "layout" else None)
+    betreff, text, html_text, header = darstellen(mandant, "[TEST] " + z["betreff"], z["text"], None, blocks=blocks, ansicht_token=ansicht)
+    ergebnisse, erster_grund = [], None
+    for adresse in ziele:
+        roh = mailer.senden(mandant, adresse, betreff, text, html_text, header)
+        if roh in ("gesendet", "datei"):
+            ergebnisse.append({"adresse": adresse, "ergebnis": roh})
+        else:
+            erster_grund = erster_grund or roh
+            ergebnisse.append({"adresse": adresse, "ergebnis": "fehler", "grund": roh})
+    ok = sum(1 for e in ergebnisse if e["ergebnis"] != "fehler")
+    if ok == 0:
+        raise Fehler("versand_nicht_moeglich", "Die Testmail konnte nicht gesendet werden (%s). Versandmodus und Konto des Mandanten prüfen." % erster_grund, 409)
     with db.verbindung() as c:
         c.execute("UPDATE entwurf SET testmail_hash=?, testmail_am=? WHERE id=? AND mandant_id=?", (z["content_hash"], _iso(_jetzt()), z["id"], mandant["id"]))
-    return {"status": "gesendet", "content_hash": z["content_hash"], "an": ziel_adresse}
+    return {"status": "gesendet" if ok == len(ergebnisse) else "teilweise", "content_hash": z["content_hash"], "gesendet": ok, "fehler": len(ergebnisse) - ok,
+            "ergebnisse": ergebnisse}
 
 
 def _empfaenger_ermitteln(mandant: dict, z) -> list:

@@ -6,6 +6,7 @@ from unittest import mock
 
 import db
 import newsletter
+from tests.hilfen_testmail import testmail_liste
 from tests.test_etappe1 import Basis as BasisBild, jpg
 from tests.test_etappe2 import blocks
 from tests.test_meilenstein_b import Basis as BasisMail
@@ -65,7 +66,7 @@ class TestVorschau(Basis):
         b = blocks(ids)
         vorschau = self.vorschau(m, betreff="[TEST] Neues von HILO", blocks=b).get_json()["html"]
         e = self.anlegen(m, b)
-        newsletter.testmail(m, e["id"], None, "betreiber@bst-next.de")
+        testmail_liste(m, e["id"])
         testmail = self.mail_html("hilo")[0]
         norm = lambda h: re.sub(r"/ansicht/[A-Za-z0-9_-]+", "/ansicht/X", h)
         self.assertEqual(norm(vorschau).strip(), norm(testmail).strip())
@@ -171,7 +172,7 @@ class TestBrowserAnsicht(Basis):
         m, ids = self.start(1)
         newsletter.testliste_setzen(m, ["test@example.org"])
         e = self.anlegen(m, blocks(ids))
-        newsletter.testmail(m, e["id"], None, "betreiber@bst-next.de")
+        testmail_liste(m, e["id"])
         newsletter.freigeben(m, e["id"], newsletter.lesen(m, e["id"])["content_hash"], True, "betreiber@bst-next.de")
         newsletter.lauf()
         g = self.anfrage("get", "/mandanten/%d/entwuerfe/%d" % (m["id"], e["id"])).get_json()
@@ -212,7 +213,7 @@ class TestBrowserAnsicht(Basis):
     def test_mail_enthaelt_den_link_und_er_fuehrt_zur_ansicht(self):
         m, ids = self.start(1)
         e = self.anlegen(m, blocks(ids))
-        newsletter.testmail(m, e["id"], None, "betreiber@bst-next.de")
+        testmail_liste(m, e["id"])
         h, text, mail = self.mail_html("hilo")
         g = self.anfrage("get", "/mandanten/%d/entwuerfe/%d" % (m["id"], e["id"])).get_json()
         self.assertIn('href="%s"' % g["ansicht_url"], h)
@@ -225,7 +226,7 @@ class TestBrowserAnsicht(Basis):
         self.abo(m, "a@example.org")
         newsletter.echtversand_setzen(m["id"], True, "t")
         e = self.anlegen(m, blocks(ids), ziel="abonnenten")
-        newsletter.testmail(m, e["id"], None, "betreiber@bst-next.de")
+        testmail_liste(m, e["id"])
         newsletter.freigeben(m, e["id"], newsletter.lesen(m, e["id"])["content_hash"], True, "betreiber@bst-next.de")
         newsletter.lauf()
         g = self.anfrage("get", "/mandanten/%d/entwuerfe/%d" % (m["id"], e["id"])).get_json()
@@ -236,7 +237,7 @@ class TestBrowserAnsicht(Basis):
         m = self.mandant("hilo", "HILO e. V.")
         e = newsletter.anlegen(m, "Betreff", "Nur Text", "testliste", None)
         self.assertIsNone(e["ansicht_url"])
-        newsletter.testmail(m, e["id"], None, "betreiber@bst-next.de")
+        testmail_liste(m, e["id"])
         h, text, _ = self.mail_html("hilo")
         self.assertNotIn("Im Browser ansehen", h)
         self.assertNotIn("Im Browser ansehen", text)

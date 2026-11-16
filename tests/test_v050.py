@@ -20,6 +20,7 @@ import db
 import manage
 import mandanten
 import newsletter
+from tests.hilfen_testmail import testmail_liste
 from test_meilenstein_a import Basis as BasisA
 
 PI = "192.168.1.50"
@@ -286,7 +287,7 @@ class PflichtangabenTests(BasisA):
     def freigabe(self, m, ziel):
         newsletter.echtversand_setzen(m["id"], True, "t")
         e = newsletter.anlegen(m, "Betreff", "Text https://beispiel.test/x", ziel, None)
-        newsletter.testmail(m, e["id"], None, "betreiber@bst-next.de")
+        testmail_liste(m, e["id"])
         e = newsletter.lesen(m, e["id"])
         return newsletter.freigeben(m, e["id"], e["content_hash"], True, "betreiber@bst-next.de")
 
@@ -308,7 +309,7 @@ class PflichtangabenTests(BasisA):
         newsletter.echtversand_setzen(m["id"], True, "t")
         e = newsletter.anlegen(m, "Betreff", "Text", "abonnenten", None)
         # Testmail geht trotzdem (Pflichtangaben gelten für die Freigabe, nicht für die Probe)
-        newsletter.testmail(m, e["id"], None, "betreiber@bst-next.de")
+        testmail_liste(m, e["id"])
         e = newsletter.lesen(m, e["id"])
         with self.assertRaises(newsletter.Fehler) as f:
             newsletter.freigeben(m, e["id"], e["content_hash"], True, "b@bst-next.de")
@@ -330,7 +331,7 @@ class PflichtangabenTests(BasisA):
         m = self.mandant("hilo", datenschutz_url="")
         newsletter.echtversand_setzen(m["id"], True, "t")
         e = newsletter.anlegen(m, "Betreff", "Text", "abonnenten", None)
-        newsletter.testmail(m, e["id"], None, "betreiber@bst-next.de")
+        testmail_liste(m, e["id"])
         h = newsletter.lesen(m, e["id"])["content_hash"]
         self.c.set_cookie("bst_session", "tok")
         with mock.patch.object(betreiber_auth, "_bei_sortnext_fragen", return_value={"email": "catrin@bst-next.de", "betreiber": True}):
@@ -368,7 +369,7 @@ class VersandRateTests(BasisA):
         newsletter.echtversand_setzen(m["id"], True, "t")
         newsletter.limit_pro_stunde_setzen(m["id"], 8, "t")
         e = newsletter.anlegen(m, "Betreff", "Text https://beispiel.test/x", "abonnenten", None)
-        newsletter.testmail(m, e["id"], None, "betreiber@bst-next.de")
+        testmail_liste(m, e["id"])
         e = newsletter.lesen(m, e["id"])
         self.assertEqual(newsletter.freigeben(m, e["id"], e["content_hash"], True, "b@bst-next.de")["empfaenger"], 12)
         gesendet = 0
@@ -490,19 +491,22 @@ class VersandBefehleTests(BasisA):
         self.assertEqual(code, 1)
         self.assertEqual(newsletter.lesen(m, eid)["status"], "entwurf")
 
-    def test_testmail_nur_an_die_testliste_oder_die_offen_adresse(self):
+    def test_testmail_geht_an_die_testliste_nie_an_die_offen_adresse(self):
         newsletter.testliste_setzen(self.m, ["test@beispiel.de"])
         self.lauf("entwurf", "hilo", self.datei)
         eid = newsletter.liste(self.m)[0]["id"]
         code, text = self.lauf("testmail", "hilo", str(eid), "fremd@beispiel.de")
         self.assertEqual(code, 1)
         self.assertIn("Testliste", text)
-        code, text = self.lauf("testmail", "hilo", str(eid))                                  # keine Adresse, keine OFFEN_EMAIL
-        self.assertEqual(code, 1)
-        self.assertIn("Empfängeradresse", text)
         with mock.patch.dict(os.environ, {"MAILNEXT_BETREIBER_OFFEN_EMAIL": "catrin@beispiel.de"}):
-            self.assertEqual(self.lauf("testmail", "hilo", str(eid))[0], 0)
-        self.assertEqual(self.an_testmail(), "catrin@beispiel.de")
+            code, text = self.lauf("testmail", "hilo", str(eid))                              # ohne Adresse: ganze Testliste
+        self.assertEqual(code, 0)
+        self.assertIn("1 gesendet", text)
+        self.assertEqual(self.an_testmail(), "test@beispiel.de")                              # die Betreiberadresse bekommt nichts
+        newsletter.testliste_setzen(self.m, [])
+        code, text = self.lauf("testmail", "hilo", str(eid))
+        self.assertEqual(code, 1)
+        self.assertIn("Testliste ist leer", text)
 
     def an_testmail(self):
         return str(self.letzte_mail("hilo")["To"])
@@ -576,18 +580,18 @@ class AuslieferungTests(unittest.TestCase):
 
 
 class OffenModusApiTestmailTests(OffenBasis):
-    def test_testmail_im_offen_modus_ohne_adresse_wird_abgelehnt_mit_adresse_geht_sie(self):
+    def test_testmail_im_offen_modus_geht_an_die_testliste_leere_liste_wird_abgelehnt(self):
         m = self.mandant("hilo")
-        newsletter.testliste_setzen(m, ["test@beispiel.de"])
         e = newsletter.anlegen(m, "Betreff", "Text", "testliste", None)
         pfad = "/api/v1/betreiber/mandanten/%d/entwuerfe/%d/testmail" % (m["id"], e["id"])
-        r = self.post(pfad, {})
-        self.assertEqual((r.status_code, r.get_json()["error"]), (400, "empfaenger_fehlt"))
-        r = self.post(pfad, {"an": "fremd@beispiel.de"})
-        self.assertEqual((r.status_code, r.get_json()["error"]), (403, "adresse_nicht_in_testliste"))
-        self.assertEqual(self.post(pfad, {"an": "test@beispiel.de"}).status_code, 200)
         with mock.patch.dict(os.environ, {"MAILNEXT_BETREIBER_OFFEN_EMAIL": "catrin@beispiel.de"}):
-            self.assertEqual(self.post(pfad, {}).status_code, 200)                            # Standard-Empfänger
+            r = self.post(pfad, {})                                                           # leere Testliste: kein Rückfall auf die Betreiberadresse
+            self.assertEqual((r.status_code, r.get_json()["error"], r.get_json()["meldung"]), (400, "testliste_leer", "Testliste ist leer"))
+            newsletter.testliste_setzen(m, ["test@beispiel.de"])
+            r = self.post(pfad, {"an": "fremd@beispiel.de"})
+            self.assertEqual((r.status_code, r.get_json()["error"]), (403, "adresse_nicht_in_testliste"))
+            self.assertEqual(self.post(pfad, {"an": "test@beispiel.de"}).status_code, 200)
+            self.assertEqual(self.post(pfad, {}).status_code, 200)
 
 
 if __name__ == "__main__":

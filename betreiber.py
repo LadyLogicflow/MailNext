@@ -413,9 +413,9 @@ def entwurf_aendern(m, entwurf_id):
 @_nl
 def testmail(m, entwurf_id):
     d = _json() or {}
-    ergebnis = newsletter.testmail(m, entwurf_id, d.get("an"), g.betreiber["email"])
-    _audit("testmail_gesendet", "mandant=%s entwurf=%d" % (m["slug"], entwurf_id))               # Adresse steht nicht im Audit
-    return jsonify({"status": ergebnis["status"], "content_hash": ergebnis["content_hash"]})
+    ergebnis = newsletter.testmail(m, entwurf_id, d.get("an"))
+    _audit("testmail_gesendet", "mandant=%s entwurf=%d gesendet=%d fehler=%d" % (m["slug"], entwurf_id, ergebnis["gesendet"], ergebnis["fehler"]))        # Adressen stehen nicht im Audit
+    return jsonify(ergebnis)
 
 
 @bp.get("/mandanten/<int:mandant_id>/entwuerfe/<int:entwurf_id>/empfaengervorschau")

@@ -407,9 +407,10 @@ class TestEditor(MN):
         self.assertIn("Betreff: 1-150 Zeichen erforderlich", s[2]["zustand"]["fehler"])
         self.assertEqual(self.entwuerfe(), [])
 
-    def test_testmail_geht_nur_an_den_betreiber_nie_an_abonnenten(self):
+    def test_testmail_geht_nur_an_die_testliste_nie_an_abonnenten(self):
         import newsletter
         m = self.vorbereiten(echtversand=True)
+        newsletter.testliste_setzen(m, ["catrin@bst-next.de"])                                  # seit 0.6.3 geht die Testmail immer an die Testliste
         newsletter.anlegen(m, "Mit Test", "Hallo https://beispiel.test/x", "abonnenten", {"tags": ["Spender"]})
         s = self.ops([{"op": "oeffnen", "betreff": "Mit Test"}, {"op": "testmail", "an": ""}])
         self.assertIn("POST /api/v1/betreiber/mandanten/1/entwuerfe/1/testmail 200 {\"an\":null}", s[1]["requests"])
@@ -426,6 +427,7 @@ class TestEditor(MN):
     def test_freigabe_nur_mit_bestaetigung_und_aktuellem_hash(self):
         import newsletter
         m = self.vorbereiten(echtversand=True)
+        newsletter.testliste_setzen(m, ["catrin@bst-next.de"])                                  # seit 0.6.3 geht die Testmail immer an die Testliste
         newsletter.anlegen(m, "Freigabe", "Hallo https://beispiel.test/x", "abonnenten", {"tags": ["Spender"]})
         s = self.ops([{"op": "oeffnen", "betreff": "Freigabe"}, {"op": "testmail", "an": ""}, {"op": "freigeben", "bestaetigen": False}, {"op": "freigeben", "bestaetigen": True}])
         self.assertEqual([r for r in s[2]["requests"] if "freigeben" in r], [])                      # nicht bestätigt: keine Freigabe
@@ -442,6 +444,7 @@ class TestEditor(MN):
     def test_nach_aenderung_ohne_neue_testmail_keine_freigabe(self):
         import newsletter
         m = self.vorbereiten(echtversand=True)
+        newsletter.testliste_setzen(m, ["catrin@bst-next.de"])                                  # seit 0.6.3 geht die Testmail immer an die Testliste
         newsletter.anlegen(m, "Aendern", "Hallo https://beispiel.test/x", "abonnenten", {"tags": ["Spender"]})
         s = self.ops([{"op": "oeffnen", "betreff": "Aendern"}, {"op": "testmail", "an": ""}, {"op": "fuellen", "text": "Geänderter Text https://beispiel.test/y"}, {"op": "speichern"}, {"op": "freigeben"}])
         self.assertEqual(self.entwuerfe()[0]["status"], "entwurf")
@@ -467,8 +470,9 @@ class TestEditor(MN):
     def test_freigegebener_entwurf_hat_keine_bearbeiten_knoepfe(self):
         import newsletter
         m = self.vorbereiten(echtversand=True)
+        newsletter.testliste_setzen(m, ["catrin@bst-next.de"])                                  # seit 0.6.3 geht die Testmail immer an die Testliste
         e = newsletter.anlegen(m, "Fertig", "Hallo https://beispiel.test/x", "abonnenten", {})
-        newsletter.testmail(m, e["id"], None, "catrin@bst-next.de")
+        newsletter.testmail(m, e["id"])
         newsletter.freigeben(m, e["id"], newsletter.lesen(m, e["id"])["content_hash"], True, "catrin@bst-next.de")
         s = self.ops([{"op": "oeffnen", "betreff": "Fertig"}])
         self.assertNotIn("Testmail senden", s[0]["zustand"]["knoepfe"])

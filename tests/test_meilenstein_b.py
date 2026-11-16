@@ -20,6 +20,7 @@ import db
 import mailer
 import mandanten
 import newsletter
+from tests.hilfen_testmail import testmail_liste
 import schluessel
 from test_meilenstein_a import Basis as BasisA
 
@@ -46,7 +47,7 @@ class Basis(BasisA):
         if ziel == "abonnenten":
             newsletter.echtversand_setzen(m["id"], True, "t")
         e = self.entwurf(m, ziel, segment, **kw)
-        newsletter.testmail(m, e["id"], None, "betreiber@bst-next.de")
+        testmail_liste(m, e["id"])
         e = newsletter.lesen(m, e["id"])
         newsletter.freigeben(m, e["id"], e["content_hash"], True, "betreiber@bst-next.de")
         return e["id"]
@@ -55,7 +56,7 @@ class Basis(BasisA):
         return [email.message_from_bytes(p.read_bytes(), policy=email.policy.default) for p in self.mails(slug)]
 
     def an_adressen(self, slug):
-        return sorted(str(x["To"]) for x in self.eml(slug))
+        return sorted(str(x["To"]) for x in self.eml(slug) if not str(x["Subject"]).startswith("[TEST] "))          # Testmails zählen nicht als Versand
 
     def zeilen(self, entwurf_id):
         with db.verbindung() as c:
@@ -111,7 +112,7 @@ class EntwurfTests(Basis):
         a, b = self.mandant("a1"), self.mandant("b1")
         e = self.entwurf(a)
         self.assertIsNone(newsletter.lesen(b, e["id"]))
-        for f in (lambda: newsletter.aendern(b, e["id"], "x", None, None, None), lambda: newsletter.testmail(b, e["id"], None, "x@y.de"),
+        for f in (lambda: newsletter.aendern(b, e["id"], "x", None, None, None), lambda: testmail_liste(b, e["id"]),
                   lambda: newsletter.vorschau(b, e["id"]), lambda: newsletter.status(b, e["id"]), lambda: newsletter.protokoll(b, e["id"]),
                   lambda: newsletter.stoppen(b, e["id"]), lambda: newsletter.freigeben(b, e["id"], e["content_hash"], True, "x")):
             with self.assertRaises(newsletter.Fehler) as ctx:
@@ -122,33 +123,24 @@ class EntwurfTests(Basis):
 
 
 class TestmailTests(Basis):
-    def test_testmail_an_betreiber_betreff_und_stand(self):
+    def test_testmail_geht_an_die_ganze_testliste_betreff_und_stand(self):
         m = self.mandant("hilo")
+        newsletter.testliste_setzen(m, ["a@beispiel.de", "b@beispiel.de"])
         e = self.entwurf(m)
-        r = newsletter.testmail(m, e["id"], None, "Betreiber@bst-next.de")
-        self.assertEqual(r["an"], "betreiber@bst-next.de")
+        r = newsletter.testmail(m, e["id"])
+        self.assertEqual((r["status"], r["gesendet"], r["fehler"]), ("gesendet", 2, 0))
+        self.assertEqual([(x["adresse"], x["ergebnis"]) for x in r["ergebnisse"]], [("a@beispiel.de", "datei"), ("b@beispiel.de", "datei")])
+        self.assertEqual(sorted(str(x["To"]) for x in self.eml("hilo")), ["a@beispiel.de", "b@beispiel.de"])
         mail = self.eml("hilo")[0]
         self.assertTrue(str(mail["Subject"]).startswith("[TEST] "))
         self.assertTrue(newsletter.lesen(m, e["id"])["testmail"]["passender_stand"])
         self.assertIsNotNone(mail["List-Unsubscribe"])
 
-    def test_an_nur_aus_der_testliste_und_je_mandant(self):
-        a, b = self.mandant("a2"), self.mandant("b2")
-        newsletter.testliste_setzen(a, ["kolleg@beispiel.de"])
-        e = self.entwurf(a)
-        with self.assertRaises(newsletter.Fehler) as ctx:
-            newsletter.testmail(a, e["id"], "fremd@beispiel.de", "x@y.de")
-        self.assertEqual((ctx.exception.code, ctx.exception.status), ("adresse_nicht_in_testliste", 403))
-        newsletter.testmail(a, e["id"], "kolleg@beispiel.de", "x@y.de")
-        eb = self.entwurf(b)
-        with self.assertRaises(newsletter.Fehler):                                         # die Testliste von A gilt nicht für B
-            newsletter.testmail(b, eb["id"], "kolleg@beispiel.de", "x@y.de")
-
     def test_versand_aus_gibt_keine_testmail(self):
         m = self.mandant("hilo", modus="aus")
         e = self.entwurf(m)
         with self.assertRaises(newsletter.Fehler) as ctx:
-            newsletter.testmail(m, e["id"], None, "x@y.de")
+            testmail_liste(m, e["id"])
         self.assertEqual(ctx.exception.code, "versand_nicht_moeglich")
         self.assertFalse(newsletter.lesen(m, e["id"])["testmail"]["passender_stand"])
         self.assertEqual(self.mails("hilo"), [])
@@ -156,7 +148,7 @@ class TestmailTests(Basis):
     def test_aenderung_macht_testmail_ungueltig(self):
         m = self.mandant("hilo")
         e = self.entwurf(m)
-        newsletter.testmail(m, e["id"], None, "x@y.de")
+        testmail_liste(m, e["id"])
         newsletter.aendern(m, e["id"], None, "Ganz anderer Text", None, None)
         self.assertFalse(newsletter.lesen(m, e["id"])["testmail"]["passender_stand"])
 
@@ -175,13 +167,13 @@ class FreigabeTests(Basis):
                 newsletter.freigeben(m, e["id"], daten["content_hash"], daten["bestaetigt"], "x@y.de")
             return ctx.exception.code
         self.assertEqual(versuche(), "testmail_fehlt")
-        newsletter.testmail(m, e["id"], None, "x@y.de")
+        testmail_liste(m, e["id"])
         self.assertEqual(versuche(bestaetigt=False), "bestaetigung_fehlt")
         self.assertEqual(versuche(bestaetigt="ja"), "bestaetigung_fehlt")
         self.assertEqual(versuche(content_hash="0" * 64), "entwurf_geaendert")
         newsletter.aendern(m, e["id"], None, "Neuer Text", None, None)                     # Stand weicht von der Testmail ab
         self.assertEqual(versuche(content_hash=newsletter.lesen(m, e["id"])["content_hash"]), "entwurf_geaendert")
-        newsletter.testmail(m, e["id"], None, "x@y.de")
+        testmail_liste(m, e["id"])
         h = newsletter.lesen(m, e["id"])["content_hash"]
         self.assertEqual(newsletter.freigeben(m, e["id"], h, True, "x@y.de"), {"status": "freigegeben", "empfaenger": 1})
         self.assertEqual(versuche(content_hash=h), "bereits_freigegeben")
@@ -189,13 +181,13 @@ class FreigabeTests(Basis):
             newsletter.aendern(m, e["id"], "Spaet", None, None, None)
         self.assertEqual(ctx.exception.code, "nicht_mehr_aenderbar")
         with self.assertRaises(newsletter.Fehler):
-            newsletter.testmail(m, e["id"], None, "x@y.de")
+            testmail_liste(m, e["id"])
 
     def test_echtversand_ist_gesperrt_bis_ein_betreiber_freigibt(self):
         m = self.mandant("hilo")
         self.abo(m, "a@beispiel.de")
         e = self.entwurf(m, "abonnenten")
-        newsletter.testmail(m, e["id"], None, "x@y.de")
+        testmail_liste(m, e["id"])
         h = newsletter.lesen(m, e["id"])["content_hash"]
         with self.assertRaises(newsletter.Fehler) as ctx:
             newsletter.freigeben(m, e["id"], h, True, "x@y.de")
@@ -212,8 +204,9 @@ class FreigabeTests(Basis):
 
     def test_keine_empfaenger_422(self):
         m = self.mandant("hilo")
-        e = self.entwurf(m)                                                              # Testliste leer
-        newsletter.testmail(m, e["id"], None, "x@y.de")
+        e = self.entwurf(m)
+        testmail_liste(m, e["id"])
+        newsletter.testliste_setzen(m, [])                                                # Testliste wieder leer: der Versand an sie hat keine Empfänger
         with self.assertRaises(newsletter.Fehler) as ctx:
             newsletter.freigeben(m, e["id"], newsletter.lesen(m, e["id"])["content_hash"], True, "x@y.de")
         self.assertEqual((ctx.exception.code, ctx.exception.status), ("keine_empfaenger", 422))
@@ -227,7 +220,7 @@ class FreigabeTests(Basis):
         e = self.entwurf(m, "abonnenten")
         newsletter.echtversand_setzen(m["id"], True, "t")
         self.assertEqual(newsletter.vorschau(m, e["id"])["anzahl"], 1)
-        newsletter.testmail(m, e["id"], None, "x@y.de")
+        testmail_liste(m, e["id"])
         newsletter.freigeben(m, e["id"], newsletter.lesen(m, e["id"])["content_hash"], True, "x@y.de")
         self.assertEqual([z["abonnent_id"] for z in self.zeilen(e["id"])], [self.zeile(m["id"], "ja@beispiel.de")["id"]])
 
@@ -254,7 +247,7 @@ class FreigabeTests(Basis):
         e = self.freigegeben(m, "abonnenten")
         self.abo(m, "spaet@beispiel.de")                                                  # nach der Freigabe dazugekommen
         newsletter.lauf()
-        self.assertEqual(self.an_adressen("hilo"), ["frueh@beispiel.de"][:0] + ["betreiber@bst-next.de", "frueh@beispiel.de"])
+        self.assertEqual(self.an_adressen("hilo"), ["frueh@beispiel.de"])
         self.assertEqual(len(self.zeilen(e)), 1)
 
 
@@ -313,8 +306,7 @@ class VersandTests(Basis):
         e = self.freigegeben(m, "abonnenten")
         abonnenten.abmelden(abonnenten.persoenliches_token(z))
         newsletter.lauf()
-        an = [a for a in self.an_adressen("hilo") if a != "betreiber@bst-next.de"]
-        self.assertEqual(an, ["bleibt@beispiel.de"])
+        self.assertEqual(self.an_adressen("hilo"), ["bleibt@beispiel.de"])
         st = newsletter.status(m, e)
         self.assertEqual((st["gesendet"], st["uebersprungen_abgemeldet"]), (1, 1))
 
@@ -512,7 +504,11 @@ class BetreiberNewsletterApiTests(Basis):
             self.assertEqual(r.status_code, 201, r.get_data(as_text=True))
             eid, h = r.get_json()["id"], r.get_json()["content_hash"]
             self.assertEqual(self.aufruf("post", basis + "/entwuerfe/%d/freigeben" % eid, json={"content_hash": h, "bestaetigt": True}).get_json()["error"], "testmail_fehlt")
-            self.assertEqual(self.aufruf("post", basis + "/entwuerfe/%d/testmail" % eid, json={}).status_code, 200)
+            leer = self.aufruf("post", basis + "/entwuerfe/%d/testmail" % eid, json={})                  # Testliste noch leer
+            self.assertEqual((leer.status_code, leer.get_json()["error"]), (400, "testliste_leer"))
+            newsletter.testliste_setzen(m, ["test@beispiel.de"])
+            t = self.aufruf("post", basis + "/entwuerfe/%d/testmail" % eid, json={})
+            self.assertEqual((t.status_code, t.get_json()["gesendet"], t.get_json()["ergebnisse"][0]["adresse"]), (200, 1, "test@beispiel.de"))
             self.assertEqual(self.aufruf("get", basis + "/entwuerfe/%d/empfaengervorschau" % eid).get_json()["anzahl"], 1)
             r = self.aufruf("post", basis + "/entwuerfe/%d/freigeben" % eid, json={"content_hash": h, "bestaetigt": True})
             self.assertEqual((r.status_code, r.get_json()), (200, {"status": "freigegeben", "empfaenger": 1}))

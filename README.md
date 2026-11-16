@@ -66,7 +66,7 @@ Rechtlich offen (catrin/Irony): Vertragslage mit Anthropic und 14 Tage Ankündig
 
 ## Newsletter (je Mandant, Betreiber-Schnittstelle `/api/v1/betreiber/mandanten/<id>/…`)
 - `entwuerfe` (GET, POST `{betreff, text, ziel: testliste|abonnenten, segment: {rollen, interessen}}`), `entwuerfe/<eid>` (GET, PUT nur im Status entwurf).
-- `entwuerfe/<eid>/testmail` (POST `{an?}`: ohne `an` an den eingeloggten Betreiber, `an` nur aus der Testliste), `…/empfaengervorschau` (nur Zahl), `…/freigeben` (POST `{content_hash, bestaetigt: true}`),
+- `entwuerfe/<eid>/testmail` (POST `{an?}`: ohne `an` an ALLE Adressen der Testliste, `an` (Text oder Liste) nur als Teilmenge der Testliste; leere Testliste = 400 `testliste_leer`; Antwort `{status (gesendet|teilweise), content_hash, gesendet, fehler, ergebnisse:[{adresse, ergebnis (gesendet|datei|fehler), grund?}]}`), `…/empfaengervorschau` (nur Zahl), `…/freigeben` (POST `{content_hash, bestaetigt: true}`),
   `…/stoppen`, `…/status`, `…/protokoll` und `…/protokoll.csv` (Adressen, wird protokolliert; CSV mit Formelschutz).
 - `testliste` (GET, PUT, höchstens 50), `echtversand` (GET, PUT `{freigegeben: bool}`, Standard false).
 - Regeln: Freigabe nur mit Testmail zum aktuellen Stand (SHA-256 über Betreff, Text, Ziel, Segment); Empfängerliste wird bei der Freigabe festgeschrieben (nur bestätigte Adressen);
@@ -86,7 +86,7 @@ Sie rufen dieselben Funktionen wie die Betreiber-Schnittstelle auf (gleiche Prü
 ## Betreiber-Anmeldung und Pi-Testinstanz (ab 0.5.0)
 - `MAILNEXT_BETREIBER_AUTH`: `portal` (Standard: Portal-Cookie, unverändert) oder `offen` (nur Pi im Heimnetz: Betreiber-Oberfläche und -Schnittstelle ohne Anmeldung). Jeder andere Wert gilt als `portal`.
   Im Offen-Modus wird ein Betreiberaufruf nur beantwortet, wenn die Verbindung direkt von einer Loopback-/privaten Adresse kommt, kein Proxy-Kopf vorhanden ist, der Host-Kopf `MAILNEXT_PI_ADRESSE` oder localhost ist und ändernde Aufrufe mit Origin-Kopf vom selben Host stammen; sonst 403. Start-Warnung im Log, `/health` zeigt `betreiber_offen`.
-  `MAILNEXT_BETREIBER_OFFEN_EMAIL`: Akteur im Audit und Standard-Empfänger der Testmail im Offen-Modus (ohne sie braucht die Testmail eine Adresse aus der Testliste im Aufruf, sonst 400 `empfaenger_fehlt`).
+  `MAILNEXT_BETREIBER_OFFEN_EMAIL`: Akteur im Audit (seit 0.6.3 nicht mehr Empfänger der Testmail: die geht immer an die Testliste).
 - `MAILNEXT_OEFFENTLICHER_PORT` (z. B. `8001`): Auf diesem Port beantwortet die App nur die öffentlichen Newsletter-Seiten, alles andere 404. Entschieden wird am Port der Verbindung (nicht am Host-Kopf). Das Image lauscht auf 8000 (alles) und 8001; ein Tunnel/Reverse Proxy darf nur auf 8001 zeigen. Ohne die Variable gibt es keine Trennung (Produktion unverändert).
 - Freigabe an Abonnenten verlangt ab 0.5.0 `impressum_url`, `datenschutz_url`, `firmenangaben` und `absender_adresse` im Design, sonst 409 `pflichtangaben_fehlen` (Feldnamen, keine Werte). Freigaben an die Testliste sind ausgenommen.
 - Versandrate je Mandant: `GET`/`PUT /api/v1/betreiber/mandanten/<id>/versand-rate {"limit_pro_stunde": 1..600}` (Standard 100).

@@ -12,6 +12,7 @@ import db
 import layout
 import mailer
 import newsletter
+from tests.hilfen_testmail import testmail_liste
 import textformat
 from tests.test_etappe1 import Basis as BasisBild, jpg, png
 from tests.test_meilenstein_b import Basis as BasisMail
@@ -269,7 +270,7 @@ class TestLayoutMail(BasisBild, BasisMail):
     def test_testmail_hat_tabellenlayout_zwei_spalten_balken_und_bilder(self):
         m, ids = self.start(2)
         e = self.anlegen(m, blocks(ids))
-        newsletter.testmail(m, e["id"], None, "betreiber@bst-next.de")
+        testmail_liste(m, e["id"])
         h, text, mail = self.mail_html("hilo")
         self.assertIn('width="600"', h)
         self.assertIn("max-width:600px", h)
@@ -292,7 +293,7 @@ class TestLayoutMail(BasisBild, BasisMail):
     def test_jedes_bild_hat_alt_groesse_und_nur_eigenen_host(self):
         m, ids = self.start(3)
         e = self.anlegen(m, blocks(ids))
-        newsletter.testmail(m, e["id"], None, "betreiber@bst-next.de")
+        testmail_liste(m, e["id"])
         h = self.mail_html("hilo")[0]
         bilder_tags = [t for t in h.split("<img ")[1:]]
         self.assertEqual(len(bilder_tags), 3)
@@ -309,7 +310,7 @@ class TestLayoutMail(BasisBild, BasisMail):
     def test_ohne_bilder_einspaltig_ohne_balken_kein_balken(self):
         m, _ = self.start(0)
         e = self.anlegen(m, {"version": 1, "text_html": "<p>Nur Text</p>"})
-        newsletter.testmail(m, e["id"], None, "betreiber@bst-next.de")
+        testmail_liste(m, e["id"])
         h = self.mail_html("hilo")[0]
         self.assertEqual(h.count('class="sp'), 0)
         self.assertNotIn('class="balken"', h)
@@ -320,7 +321,7 @@ class TestLayoutMail(BasisBild, BasisMail):
         from tests.test_etappe1 import Basis
         self.anfrage("put", "/mandanten/%d" % m["id"], json={"design": {"balken_farbe": "#ffee00"}})
         e = self.anlegen(m, {"version": 1, "balken": {"text": "Nur Hinweis", "url": None}, "text_html": "<p>x</p>"})
-        newsletter.testmail(mandanten_lesen(m), e["id"], None, "betreiber@bst-next.de")
+        testmail_liste(mandanten_lesen(m), e["id"])
         h = self.mail_html("hilo")[0]
         balken = h.split('class="balken"')[1].split("</td>")[0]
         self.assertIn("Nur Hinweis", balken)
@@ -331,14 +332,14 @@ class TestLayoutMail(BasisBild, BasisMail):
     def test_balkenfarbe_leer_nimmt_die_primaerfarbe(self):
         m, _ = self.start(0)
         e = self.anlegen(m, {"version": 1, "balken": {"text": "Balken", "url": None}, "text_html": "<p>x</p>"})
-        newsletter.testmail(m, e["id"], None, "betreiber@bst-next.de")
+        testmail_liste(m, e["id"])
         h = self.mail_html("hilo")[0]
         self.assertIn('bgcolor="#1f3a5f"', h.split('class="balken"')[0].rsplit("<td", 1)[1])
 
     def test_html_ist_wohlgeformt(self):
         m, ids = self.start(3)
         e = self.anlegen(m, blocks(ids, text_html="<h2 data-ausrichtung=\"zentriert\">T</h2><p>a <b>b</b> <a href=\"https://e.example\">l</a></p><ul><li>x</li></ul><ol><li>y</li></ol>"))
-        newsletter.testmail(m, e["id"], None, "betreiber@bst-next.de")
+        testmail_liste(m, e["id"])
         h = self.mail_html("hilo")[0]
 
         class P(HTMLParser):
@@ -361,7 +362,7 @@ class TestLayoutMail(BasisBild, BasisMail):
         m, ids = self.start(1)
         boese = "<script>alert(1)</script><p onclick=\"x\">Hallo <a href=\"javascript:alert(1)\">Klick</a><img src=x onerror=alert(1)></p><iframe src=\"https://evil.example\"></iframe>"
         e = self.anlegen(m, blocks(ids, text_html=boese, balken={"text": "<b>Balken</b> & mehr", "url": "https://x.example/?a=1&b=2"}))
-        newsletter.testmail(m, e["id"], None, "betreiber@bst-next.de")
+        testmail_liste(m, e["id"])
         h = self.mail_html("hilo")[0].lower()
         for verboten in ("<script", "onclick", "onerror", "javascript:", "<iframe", "evil.example"):
             self.assertNotIn(verboten, h)
@@ -373,7 +374,7 @@ class TestLayoutMail(BasisBild, BasisMail):
         self.abo(m, "a@example.org")
         newsletter.echtversand_setzen(m["id"], True, "t")
         e = self.anlegen(m, blocks(ids), ziel="abonnenten")
-        newsletter.testmail(m, e["id"], None, "betreiber@bst-next.de")
+        testmail_liste(m, e["id"])
         eintrag = newsletter.lesen(m, e["id"])
         newsletter.freigeben(m, e["id"], eintrag["content_hash"], True, "betreiber@bst-next.de")
         vorher = len(self.mails("hilo"))
@@ -400,7 +401,7 @@ class TestLayoutMail(BasisBild, BasisMail):
         m, ids = self.start(1)
         newsletter.testliste_setzen(m, ["test@example.org"])
         e = self.anlegen(m, blocks(ids))
-        newsletter.testmail(m, e["id"], None, "betreiber@bst-next.de")
+        testmail_liste(m, e["id"])
         newsletter.freigeben(m, e["id"], newsletter.lesen(m, e["id"])["content_hash"], True, "betreiber@bst-next.de")
         self.assertEqual(self.anfrage("delete", "/mandanten/%d/bilder/%d" % (m["id"], ids[0])).status_code, 409)
 
