@@ -1844,6 +1844,9 @@ async function renderAbonnenten(m) {
         });
         card.appendChild(statsDiv);
 
+        // Abonnent manuell hinzufügen
+        await renderAbonnentHinzufuegen(m, card);
+
         // Tabelle
         const table = document.createElement('table');
         const thead = document.createElement('thead');
@@ -1907,6 +1910,240 @@ async function renderAbonnenten(m) {
         loadingDiv.textContent = 'Fehler: ' + err.message;
         loadingDiv.style.color = 'var(--color-error)';
     }
+}
+
+// Abonnent manuell hinzufügen
+async function renderAbonnentHinzufuegen(m, card) {
+    const section = document.createElement('div');
+    section.style.marginBottom = '2rem';
+    section.style.padding = '1.5rem';
+    section.style.background = '#f9fafb';
+    section.style.borderRadius = '6px';
+
+    const subtitle = document.createElement('h3');
+    subtitle.textContent = 'Abonnent hinzufügen';
+    subtitle.style.marginTop = '0';
+    subtitle.style.marginBottom = '1rem';
+    section.appendChild(subtitle);
+
+    const form = document.createElement('form');
+    form.id = 'abonnent-form';
+
+    // E-Mail
+    const emailGroup = document.createElement('div');
+    emailGroup.className = 'form-group';
+    const emailLabel = document.createElement('label');
+    emailLabel.textContent = 'E-Mail-Adresse *';
+    emailGroup.appendChild(emailLabel);
+    const emailInput = document.createElement('input');
+    emailInput.type = 'email';
+    emailInput.id = 'abonnent-email';
+    emailInput.required = true;
+    emailInput.placeholder = 'beispiel@domain.de';
+    emailInput.style.width = '100%';
+    emailGroup.appendChild(emailInput);
+    form.appendChild(emailGroup);
+
+    // Quelle/Einwilligung
+    const quelleGroup = document.createElement('div');
+    quelleGroup.className = 'form-group';
+    const quelleLabel = document.createElement('label');
+    quelleLabel.textContent = 'Quelle/Einwilligung *';
+    quelleGroup.appendChild(quelleLabel);
+    const quelleInput = document.createElement('input');
+    quelleInput.type = 'text';
+    quelleInput.id = 'abonnent-quelle';
+    quelleInput.required = true;
+    quelleInput.minLength = 5;
+    quelleInput.maxLength = 200;
+    quelleInput.placeholder = 'z. B. Papierformular vom 12.11.';
+    quelleInput.style.width = '100%';
+    quelleGroup.appendChild(quelleInput);
+    const quelleHelp = document.createElement('small');
+    quelleHelp.textContent = 'Wie liegt die Einwilligung vor? z. B. Papierformular vom 12.11.';
+    quelleHelp.style.color = '#6b7280';
+    quelleGroup.appendChild(quelleHelp);
+    form.appendChild(quelleGroup);
+
+    // Rolle (optional)
+    if (m.design && m.design.rollen && m.design.rollen.length > 0) {
+        const rolleGroup = document.createElement('div');
+        rolleGroup.className = 'form-group';
+        const rolleLabel = document.createElement('label');
+        rolleLabel.textContent = 'Rolle (optional)';
+        rolleGroup.appendChild(rolleLabel);
+        const rolleSelect = document.createElement('select');
+        rolleSelect.id = 'abonnent-rolle';
+        rolleSelect.style.width = '100%';
+        const emptyOpt = document.createElement('option');
+        emptyOpt.value = '';
+        emptyOpt.textContent = '(keine)';
+        rolleSelect.appendChild(emptyOpt);
+        m.design.rollen.forEach(r => {
+            const opt = document.createElement('option');
+            opt.value = r.wert;
+            opt.textContent = r.label;
+            rolleSelect.appendChild(opt);
+        });
+        rolleGroup.appendChild(rolleSelect);
+        form.appendChild(rolleGroup);
+    }
+
+    // Interessen (optional)
+    if (m.design && m.design.interessen && m.design.interessen.length > 0) {
+        const interessenGroup = document.createElement('div');
+        interessenGroup.className = 'form-group';
+        const interessenLabel = document.createElement('label');
+        interessenLabel.textContent = 'Interessen (optional)';
+        interessenGroup.appendChild(interessenLabel);
+        m.design.interessen.forEach(i => {
+            const label = document.createElement('label');
+            label.style.display = 'block';
+            label.style.marginBottom = '0.5rem';
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.className = 'abonnent-interesse';
+            checkbox.value = i.wert;
+            label.appendChild(checkbox);
+            label.appendChild(document.createTextNode(' ' + i.label));
+            interessenGroup.appendChild(label);
+        });
+        form.appendChild(interessenGroup);
+    }
+
+    // Live-Validierung
+    emailInput.addEventListener('input', () => {
+        const email = emailInput.value.trim();
+        const isValid = email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+        emailInput.style.borderColor = email && !isValid ? 'var(--color-error)' : '';
+    });
+
+    quelleInput.addEventListener('input', () => {
+        const quelle = quelleInput.value.trim();
+        const isValid = quelle.length >= 5 && quelle.length <= 200;
+        quelleInput.style.borderColor = quelle && !isValid ? 'var(--color-error)' : '';
+    });
+
+    // Fehlermeldung
+    const errorDiv = document.createElement('div');
+    errorDiv.id = 'abonnent-error';
+    errorDiv.className = 'error hidden';
+    form.appendChild(errorDiv);
+
+    // Erfolgsmeldung
+    const successDiv = document.createElement('div');
+    successDiv.id = 'abonnent-success';
+    successDiv.className = 'hidden';
+    successDiv.style.padding = '1rem';
+    successDiv.style.marginTop = '1rem';
+    successDiv.style.background = '#d1fae5';
+    successDiv.style.color = '#065f46';
+    successDiv.style.borderRadius = '6px';
+    form.appendChild(successDiv);
+
+    // Submit
+    const actions = document.createElement('div');
+    actions.className = 'form-actions';
+    const submitBtn = document.createElement('button');
+    submitBtn.type = 'submit';
+    submitBtn.className = 'btn btn-primary';
+    submitBtn.textContent = 'Abonnent hinzufügen';
+    actions.appendChild(submitBtn);
+    form.appendChild(actions);
+
+    // Submit Handler
+    form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+
+        const errorDiv = document.getElementById('abonnent-error');
+        const successDiv = document.getElementById('abonnent-success');
+        errorDiv.className = 'error hidden';
+        successDiv.className = 'hidden';
+
+        const email = emailInput.value.trim();
+        const quelle = quelleInput.value.trim();
+
+        if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+            errorDiv.textContent = 'Bitte geben Sie eine gültige E-Mail-Adresse ein.';
+            errorDiv.className = 'error';
+            return;
+        }
+
+        if (quelle.length < 5 || quelle.length > 200) {
+            errorDiv.textContent = 'Quelle/Einwilligung muss zwischen 5 und 200 Zeichen lang sein.';
+            errorDiv.className = 'error';
+            return;
+        }
+
+        const body = {
+            daten: email,
+            quelle: quelle,
+            einwilligung_bestaetigt: true
+        };
+
+        // Rolle
+        const rolleSelect = document.getElementById('abonnent-rolle');
+        if (rolleSelect && rolleSelect.value) {
+            body.rolle = rolleSelect.value;
+        }
+
+        // Interessen
+        const interessenCheckboxes = document.querySelectorAll('.abonnent-interesse:checked');
+        if (interessenCheckboxes.length > 0) {
+            body.interessen = Array.from(interessenCheckboxes).map(cb => cb.value);
+        }
+
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Wird hinzugefügt...';
+
+        try {
+            const result = await apiCall(`/mandanten/${m.id}/abonnenten/import`, {
+                method: 'POST',
+                body: JSON.stringify(body)
+            });
+
+            // Antwort interpretieren
+            let message = '';
+            if (result.neu > 0) {
+                message = `Abonnent erfolgreich hinzugefügt: ${email}`;
+            } else if (result.dublette > 0) {
+                message = `Die E-Mail-Adresse ${email} ist bereits in der Liste.`;
+            } else if (result.uebersprungen && result.uebersprungen.abgemeldet > 0) {
+                message = `Die E-Mail-Adresse ${email} wurde bereits abgemeldet und wird nicht wieder aufgenommen.`;
+            } else if (result.uebersprungen && result.uebersprungen.unzustellbar > 0) {
+                message = `Die E-Mail-Adresse ${email} ist als unzustellbar markiert.`;
+            } else if (result.ungueltig > 0) {
+                message = `Die E-Mail-Adresse ${email} ist ungültig.`;
+            } else {
+                message = 'Abonnent hinzugefügt.';
+            }
+
+            successDiv.textContent = message;
+            successDiv.className = '';
+
+            // Formular zurücksetzen
+            emailInput.value = '';
+            quelleInput.value = '';
+            if (rolleSelect) rolleSelect.value = '';
+            interessenCheckboxes.forEach(cb => cb.checked = false);
+
+            // Liste neu laden
+            showToast(message, result.neu > 0 ? 'success' : 'info');
+            setTimeout(() => {
+                showMandantDetails(m.id, 'abonnenten');
+            }, 1500);
+
+        } catch (err) {
+            errorDiv.textContent = err.message;
+            errorDiv.className = 'error';
+        } finally {
+            submitBtn.disabled = false;
+            submitBtn.textContent = 'Abonnent hinzufügen';
+        }
+    });
+
+    section.appendChild(form);
+    card.appendChild(section);
 }
 
 // Import
