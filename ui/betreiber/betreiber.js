@@ -1809,7 +1809,7 @@ async function renderNewsletterEditor(m, entwurfId) {
             const testmailBtn = document.createElement('button');
             testmailBtn.type = 'button';
             testmailBtn.className = 'btn btn-secondary';
-            testmailBtn.textContent = 'Testmail an Testliste';
+            testmailBtn.textContent = 'Testmail senden';
             testmailBtn.addEventListener('click', () => sendTestmail(m, entwurfId));
             actions.appendChild(testmailBtn);
 
