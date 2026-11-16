@@ -36,11 +36,14 @@ def _health_daten() -> tuple[dict, bool]:
 
 
 IMPORT_MAX_BYTES = 3_500_000                                       # Import von Bestandsadressen (bis 20 000 Zeilen); alle anderen Aufrufe bleiben bei 300 000
+BILD_MAX_BYTES = 5 * 1024 * 1024 + 300_000                           # Bild-Upload: 5 MB Datei plus Formularfelder
 
 
 class _Anfrage(Request):
     @property
     def max_content_length(self):
+        if self.endpoint == "betreiber.bild_hochladen":
+            return BILD_MAX_BYTES
         return IMPORT_MAX_BYTES if self.endpoint == "betreiber.abonnenten_import" else 300000
 
     @max_content_length.setter

@@ -8,6 +8,7 @@ from flask import Blueprint, g, jsonify, request
 
 import abonnenten
 import betreiber_auth
+import bilder
 import db
 import import_csv
 import ki
@@ -104,6 +105,50 @@ def aendern(mandant_id):
         return _fehler(str(exc))
     _audit("mandant_geaendert", "mandant=%s felder=%s" % (m["slug"], ",".join(sorted(d))))
     return jsonify(_sicht(m))
+
+
+# ----- Bilder (Logo, später Newsletter-Bilder) -----
+
+@bp.post("/mandanten/<int:mandant_id>/bilder")
+@betreiber_auth.betreiber_pflicht
+def bild_hochladen(mandant_id):
+    """Bild annehmen: multipart mit file (Pflicht) und alt (Pflicht, 1-150 Zeichen). Neu-Kodierung ohne Metadaten, siehe bilder.py. Ins Audit kommen nur Zahlen."""
+    m = _mandant_oder_404(mandant_id)
+    if m is None:
+        return jsonify({"error": "nicht_gefunden"}), 404
+    datei = request.files.get("file")
+    try:
+        if datei is None:
+            raise bilder.BildFehler("datei_fehlt")
+        bild = bilder.speichern(m, datei.read(bilder.MAX_BYTES + 1), request.form.get("alt"))
+    except bilder.BildFehler as f:
+        return jsonify({"error": f.code, "meldung": f.meldung}), (413 if f.code == "zu_gross" else 400)
+    _audit("bild_hochgeladen", "mandant=%s bild=%d bytes=%d" % (m["slug"], bild["id"], bild["groesse_bytes"]))
+    return jsonify(bild), 201
+
+
+@bp.get("/mandanten/<int:mandant_id>/bilder")
+@betreiber_auth.betreiber_pflicht
+def bilder_liste(mandant_id):
+    m = _mandant_oder_404(mandant_id)
+    if m is None:
+        return jsonify({"error": "nicht_gefunden"}), 404
+    liste_ = bilder.liste(m)
+    _audit("bilder_gelesen", "mandant=%s anzahl=%d" % (m["slug"], len(liste_)))
+    return jsonify(liste_)
+
+
+@bp.delete("/mandanten/<int:mandant_id>/bilder/<int:bild_id>")
+@betreiber_auth.betreiber_pflicht
+def bild_loeschen(mandant_id, bild_id):
+    m = _mandant_oder_404(mandant_id)
+    if m is None or not bilder.gehoert_zu(mandant_id, bild_id):
+        return jsonify({"error": "nicht_gefunden"}), 404
+    if bilder.in_verwendung(m, bild_id):
+        return jsonify({"error": "bild_in_verwendung", "meldung": "Das Bild wird gebraucht (Logo oder versendeter Newsletter) und kann nicht gelöscht werden."}), 409
+    bilder.loeschen(m, bild_id)
+    _audit("bild_geloescht", "mandant=%s bild=%d" % (m["slug"], bild_id))
+    return "", 204
 
 
 @bp.post("/mandanten/<int:mandant_id>/einwilligungen")
@@ -300,7 +345,10 @@ def _nl(f):
         try:
             return f(m, *a, **kw)
         except newsletter.Fehler as fehler:
-            return jsonify({"error": fehler.code, "meldung": fehler.meldung}), fehler.status
+            antwort = {"error": fehler.code, "meldung": fehler.meldung}
+            if fehler.feld:
+                antwort["feld"] = fehler.feld
+            return jsonify(antwort), fehler.status
     return innen
 
 
@@ -317,9 +365,12 @@ def entwuerfe(m):
 @_nl
 def entwurf_anlegen(m):
     d = _json() or {}
-    e = newsletter.anlegen(m, d.get("betreff"), d.get("text"), d.get("ziel", "testliste"), d.get("segment"))
+    e = newsletter.anlegen(m, d.get("betreff"), d.get("text"), d.get("ziel", "testliste"), d.get("segment"), d.get("format", "text"), d.get("blocks"))
     _audit("entwurf_angelegt", "mandant=%s entwurf=%d ziel=%s" % (m["slug"], e["id"], e["ziel"]))
-    return jsonify({"id": e["id"], "content_hash": e["content_hash"]}), 201
+    antwort = {"id": e["id"], "content_hash": e["content_hash"]}
+    if e["format"] == "layout":
+        antwort["blocks"] = e["blocks"]                                  # die BEREINIGTE Fassung
+    return jsonify(antwort), 201
 
 
 @bp.get("/mandanten/<int:mandant_id>/entwuerfe/<int:entwurf_id>")
@@ -338,9 +389,12 @@ def entwurf_lesen(m, entwurf_id):
 @_nl
 def entwurf_aendern(m, entwurf_id):
     d = _json() or {}
-    e = newsletter.aendern(m, entwurf_id, d.get("betreff"), d.get("text"), d.get("ziel"), d.get("segment"))
+    e = newsletter.aendern(m, entwurf_id, d.get("betreff"), d.get("text"), d.get("ziel"), d.get("segment"), d.get("blocks"))
     _audit("entwurf_geaendert", "mandant=%s entwurf=%d" % (m["slug"], entwurf_id))
-    return jsonify({"content_hash": e["content_hash"]})
+    antwort = {"content_hash": e["content_hash"]}
+    if e["format"] == "layout":
+        antwort["blocks"] = e["blocks"]                                  # die BEREINIGTE Fassung
+    return jsonify(antwort)
 
 
 @bp.post("/mandanten/<int:mandant_id>/entwuerfe/<int:entwurf_id>/testmail")

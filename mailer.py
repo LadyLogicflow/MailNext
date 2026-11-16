@@ -66,8 +66,14 @@ def html_rahmen(mandant: dict, titel: str, inhalt_html: str) -> str:
     """E-Mail-HTML im Design des Mandanten (nur Inline-Stil, wie Mailprogramme es brauchen)."""
     d = mandant["design"]
     schrift = mandanten.SCHRIFTEN[d["schrift"]]
+    logo_adresse = d["logo_url"]
+    if d.get("logo_bild_id"):                                        # hochgeladenes Logo hat Vorrang vor der externen Adresse
+        import bilder
+        b = bilder.oeffentliche_adresse(d["logo_bild_id"])
+        if b:
+            logo_adresse = "%s/%s/bild/%s.%s" % (_basis(mandant), b[0], b[1], b[2])
     logo = ('<img src="%s" alt="%s" style="max-height:48px;max-width:240px;display:block">'
-            % (html.escape(d["logo_url"], quote=True), html.escape(mandant["name"], quote=True))) if d["logo_url"] else \
+            % (html.escape(logo_adresse, quote=True), html.escape(mandant["name"], quote=True))) if logo_adresse else \
         '<span style="font-size:20px;font-weight:bold;color:#ffffff">%s</span>' % html.escape(mandant["name"])
     return ('<!doctype html><html lang="de"><head><meta charset="utf-8"><title>%s</title></head>'
             '<body style="margin:0;background:%s;font-family:%s;color:%s">'
