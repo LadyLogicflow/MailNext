@@ -1003,3 +1003,77 @@ class TestLayout(MN):
         self.assertTrue(text["text_sichtbar"])
         self.assertIn("Hallo Vorschau", text["text"])
         self.assertEqual(self.entwuerfe(), [])                                                # die Vorschau speichert nichts
+
+
+class TestVersandRate(MN):
+    """Mails pro Stunde im Reiter Versand (catrin #19195): Anzeige aus GET, gültiger PUT, ungültige Werte gesperrt, 400 zeigt die meldung am Feld."""
+
+    def ops(self, ops):
+        o = self.node(szenario="versandrate", mandant_name="HILO e. V.", ops=ops)
+        self.assertTrue(o["ok"], o)
+        return o
+
+    def test_anzeige_aus_get_standard_und_bereich(self):
+        m = self.mandant("hilo", "HILO e. V.")
+        o = self.ops([])
+        s = o["start"]
+        self.assertTrue(s["formular"])
+        self.assertEqual(s["label"], "Mails pro Stunde")
+        self.assertEqual(s["wert"], "100")                                                      # Standard, nichts gespeichert
+        self.assertEqual(s["hinweis"], "Standard 100, erlaubt 1 bis 600")                      # Werte stammen aus der GET-Antwort
+        self.assertEqual(s["attrs"], {"typ": "number", "min": "1", "max": "600", "step": "1"})
+        self.assertEqual(s["knopf"], {"text": "Speichern", "gesperrt": False})
+        self.assertIsNone(s["feld_fehler"])
+        self.assertEqual([(r["m"], r["s"]) for r in s["requests"]], [("GET", 200)])
+        import newsletter
+        newsletter.limit_pro_stunde_setzen(m["id"], 250, "t")
+        self.assertEqual(self.ops([])["start"]["wert"], "250")                                  # gespeicherter Wert statt Standard
+
+    def test_gueltiger_put_sendet_ganze_zahl_und_zeigt_toast(self):
+        import newsletter
+        m = self.mandant("hilo", "HILO e. V.")
+        o = self.ops([{"op": "tippen", "wert": "300"}, {"op": "speichern"}, {"op": "tippen", "wert": "1"}, {"op": "speichern"}, {"op": "tippen", "wert": "600"}, {"op": "speichern"}])
+        erster = o["schritte"][1]["zustand"]
+        self.assertEqual(erster["requests"], [{"m": "PUT", "s": 200, "body": {"limit_pro_stunde": 300}}])
+        self.assertIsInstance(erster["requests"][0]["body"]["limit_pro_stunde"], int)           # Zahl, kein Text
+        self.assertEqual(erster["toast"], "Mails pro Stunde gespeichert")
+        self.assertIsNone(erster["feld_fehler"])
+        self.assertEqual(erster["wert"], "300")
+        self.assertEqual(o["schritte"][3]["zustand"]["requests"][0]["body"], {"limit_pro_stunde": 1})        # untere Grenze gilt
+        self.assertEqual(o["schritte"][5]["zustand"]["requests"][0]["body"], {"limit_pro_stunde": 600})      # obere Grenze gilt
+        self.assertEqual(newsletter.limit_pro_stunde(m["id"]), 600)
+
+    def test_ungueltige_werte_sperren_den_knopf_und_senden_nichts(self):
+        import newsletter
+        m = self.mandant("hilo", "HILO e. V.")
+        faelle = ["0", "601", "1.5", "", "-1", "1e2"]
+        ops = []
+        for wert in faelle:
+            ops += [{"op": "tippen", "wert": wert}, {"op": "speichern"}]
+        o = self.ops(ops)
+        for i, wert in enumerate(faelle):
+            nach_tippen, nach_speichern = o["schritte"][2 * i]["zustand"], o["schritte"][2 * i + 1]["zustand"]
+            self.assertTrue(nach_tippen["knopf"]["gesperrt"], repr(wert))
+            self.assertEqual(nach_tippen["feld_fehler"], "Bitte eine ganze Zahl von 1 bis 600 eingeben.", repr(wert))
+            self.assertEqual(nach_tippen["markiert"], "true", repr(wert))
+            self.assertEqual(nach_speichern["requests"], [], repr(wert))                         # auch ein erzwungenes Absenden schickt nichts
+        o = self.ops([{"op": "tippen", "wert": "0"}, {"op": "tippen", "wert": "50"}])            # wieder gültig: Sperre und Meldung verschwinden
+        zurueck = o["schritte"][1]["zustand"]
+        self.assertFalse(zurueck["knopf"]["gesperrt"])
+        self.assertIsNone(zurueck["feld_fehler"])
+        self.assertEqual(newsletter.limit_pro_stunde(m["id"]), 100)                              # nichts gespeichert
+
+    def test_400_zeigt_die_meldung_am_feld_ohne_erfolgs_toast(self):
+        import newsletter
+        m = self.mandant("hilo", "HILO e. V.")
+        fehler = newsletter.Fehler("limit_ungueltig", "limit_pro_stunde muss eine ganze Zahl von 1 bis 600 sein", 400)
+        with mock.patch.object(newsletter, "limit_pro_stunde_setzen", side_effect=fehler):
+            o = self.ops([{"op": "tippen", "wert": "50"}, {"op": "speichern"}])
+        s = o["schritte"][1]["zustand"]
+        self.assertEqual([(r["m"], r["s"]) for r in s["requests"]], [("PUT", 400)])
+        self.assertEqual(s["feld_fehler"], "limit_pro_stunde muss eine ganze Zahl von 1 bis 600 sein")   # meldung des Servers, 1:1
+        self.assertEqual(s["markiert"], "true")
+        self.assertNotEqual(s["toast"], "Mails pro Stunde gespeichert")
+        self.assertFalse(s["knopf"]["gesperrt"])                                                  # Eingabe bleibt korrigierbar
+        self.assertEqual(s["wert"], "50")
+        self.assertEqual(newsletter.limit_pro_stunde(m["id"]), 100)

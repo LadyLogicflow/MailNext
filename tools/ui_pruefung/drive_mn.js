@@ -427,6 +427,40 @@ async function main() {
       out.schritte.push({op, requests: neu.map(r => `${r.m} ${r.p} ${r.s}`), bodies: neu.filter(r => r.body).map(r => ({m: r.m, p: r.p, s: r.s, body: r.body})), zustand: sicht()});
     }
   }
+  if (arg.szenario === 'versandrate') {
+    await klick('Versand');
+    await sleep(900);
+    const sicht = (vor) => {
+      const eingabe = doc.getElementById('versandrate-limit');
+      const fehler = doc.getElementById('versandrate-fehler');
+      const knopf = doc.querySelector('#versandrate-form button[type=submit]');
+      return {
+        formular: !!doc.getElementById('versandrate-form'),
+        ladefehler: doc.getElementById('versandrate-ladefehler') ? doc.getElementById('versandrate-ladefehler').textContent : null,
+        label: doc.querySelector('label[for="versandrate-limit"]') ? doc.querySelector('label[for="versandrate-limit"]').textContent : null,
+        wert: eingabe ? eingabe.value : null,
+        attrs: eingabe ? {typ: eingabe.type, min: eingabe.min, max: eingabe.max, step: eingabe.step} : null,
+        hinweis: doc.getElementById('versandrate-hinweis') ? doc.getElementById('versandrate-hinweis').textContent : null,
+        knopf: knopf ? {text: knopf.textContent, gesperrt: knopf.disabled} : null,
+        feld_fehler: fehler && !fehler.classList.contains('hidden') ? fehler.textContent : null,
+        markiert: eingabe ? eingabe.getAttribute('aria-invalid') : null,
+        toast: toastText(),
+        requests: requests.slice(vor).filter(r => r.p.endsWith('/versand-rate')).map(r => ({m: r.m, s: r.s, body: r.body === undefined ? null : r.body})),
+      };
+    };
+    out.start = sicht(0);
+    out.schritte = [];
+    for (const op of arg.ops || []) {
+      const vor = requests.length;
+      const eingabe = doc.getElementById('versandrate-limit');
+      if (op.op === 'tippen') { eingabe.value = op.wert; eingabe.dispatchEvent(new win.Event('input', {bubbles: true})); }
+      if (op.op === 'speichern') {
+        doc.getElementById('versandrate-form').dispatchEvent(new win.Event('submit', {bubbles: true, cancelable: true}));
+        await sleep(op.warte || 1000);
+      }
+      out.schritte.push({op, zustand: sicht(vor)});
+    }
+  }
   out.toast = toastText();
   out.fehler_js = fehler.slice(0, 5);
   return out;

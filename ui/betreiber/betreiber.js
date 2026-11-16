@@ -943,6 +943,100 @@ async function renderVersand(m) {
     card.appendChild(form);
     main.innerHTML = '';
     main.appendChild(card);
+
+    await renderVersandRate(m, card);
+}
+
+// Versandrate: Mails pro Stunde (GET/PUT /mandanten/<id>/versand-rate, Standard und Bereich kommen aus der GET-Antwort)
+async function renderVersandRate(m, card) {
+    const rateForm = document.createElement('form');
+    rateForm.id = 'versandrate-form';
+    rateForm.style.marginTop = '2rem';
+
+    const titel = document.createElement('h3');
+    titel.textContent = 'Versandrate';
+    rateForm.appendChild(titel);
+    card.appendChild(rateForm);
+
+    let rate;
+    try {
+        rate = await apiCall(`/mandanten/${m.id}/versand-rate`);
+    } catch (err) {
+        const fehler = document.createElement('div');
+        fehler.className = 'error';
+        fehler.id = 'versandrate-ladefehler';
+        fehler.textContent = 'Versandrate konnte nicht geladen werden: ' + err.message;
+        rateForm.appendChild(fehler);
+        return;
+    }
+
+    const von = rate.erlaubt_von;
+    const bis = rate.erlaubt_bis;
+    const gruppe = document.createElement('div');
+    gruppe.className = 'form-group';
+    const label = document.createElement('label');
+    label.setAttribute('for', 'versandrate-limit');
+    label.textContent = 'Mails pro Stunde';
+    gruppe.appendChild(label);
+    const eingabe = document.createElement('input');
+    eingabe.type = 'number';
+    eingabe.id = 'versandrate-limit';
+    eingabe.min = String(von);
+    eingabe.max = String(bis);
+    eingabe.step = '1';
+    eingabe.required = true;
+    eingabe.value = String(rate.limit_pro_stunde);
+    gruppe.appendChild(eingabe);
+    const hinweis = document.createElement('small');
+    hinweis.id = 'versandrate-hinweis';
+    hinweis.textContent = `Standard ${rate.standard}, erlaubt ${von} bis ${bis}`;
+    gruppe.appendChild(hinweis);
+    const feldFehler = document.createElement('div');
+    feldFehler.id = 'versandrate-fehler';
+    feldFehler.className = 'field-error hidden';
+    gruppe.appendChild(feldFehler);
+    rateForm.appendChild(gruppe);
+
+    const speichern = document.createElement('button');
+    speichern.type = 'submit';
+    speichern.className = 'btn btn-primary';
+    speichern.textContent = 'Speichern';
+    rateForm.appendChild(speichern);
+
+    const zeigeFehler = (text) => {
+        feldFehler.textContent = text || '';
+        feldFehler.classList.toggle('hidden', !text);
+        if (text) eingabe.setAttribute('aria-invalid', 'true');
+        else eingabe.removeAttribute('aria-invalid');
+    };
+    // Nur ganze Zahlen im erlaubten Bereich; alles andere (leer, 0, 1.5, 601, -1) sperrt den Knopf und meldet am Feld
+    const pruefen = () => {
+        const roh = eingabe.value.trim();
+        const gueltig = /^\d+$/.test(roh) && Number(roh) >= von && Number(roh) <= bis;
+        speichern.disabled = !gueltig;
+        zeigeFehler(gueltig ? '' : `Bitte eine ganze Zahl von ${von} bis ${bis} eingeben.`);
+        return gueltig ? Number(roh) : null;
+    };
+    eingabe.addEventListener('input', pruefen);
+
+    rateForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const wert = pruefen();
+        if (wert === null) return;
+        speichern.disabled = true;
+        speichern.textContent = 'Wird gespeichert...';
+        try {
+            const antwort = await apiCall(`/mandanten/${m.id}/versand-rate`, {method: 'PUT', body: JSON.stringify({limit_pro_stunde: wert})});
+            eingabe.value = String(antwort.limit_pro_stunde);
+            zeigeFehler('');
+            showToast('Mails pro Stunde gespeichert', 'success');
+        } catch (err) {
+            zeigeFehler(err.message);
+        } finally {
+            speichern.textContent = 'Speichern';
+            speichern.disabled = false;
+        }
+    });
 }
 
 // Einstellungen (global)
