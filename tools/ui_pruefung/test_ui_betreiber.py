@@ -698,7 +698,7 @@ class TestBilder(MN):
                      (json.dumps({"logo_bild_id": bild_id}), m["id"]))
         # Löschen -> 409
         o = self.node(szenario="bilder", mandant_name="HILO e. V.", ops=[{"op": "loeschen", "bild_id": bild_id}])
-        self.assertIn("verwendet", o["schritte"][0]["zustand"]["toast"].lower(), "409-Meldung 'wird verwendet' muss im Toast erscheinen")
+        self.assertIn("gebraucht", o["schritte"][0]["zustand"]["toast"].lower(), "409-Meldung des Servers ('Das Bild wird gebraucht ...') muss im Toast erscheinen")
 
     def test_logo_bild_id_als_zahl_oder_null_im_put(self):
         """PUT /mandanten sendet logo_bild_id als number (parseInt) oder null (betreiber.js:768)."""
