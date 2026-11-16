@@ -256,6 +256,75 @@ async function main() {
       out.schritte.push({op, zustand: sicht(vor)});
     }
   }
+  if (arg.szenario === 'bilder') {
+    await klick('Bilder');
+    await sleep(900);
+    const sicht = (vor) => ({
+      fehler: doc.getElementById('bild-upload-error') && !doc.getElementById('bild-upload-error').classList.contains('hidden') ? doc.getElementById('bild-upload-error').textContent : null,
+      toast: toastText(),
+      upload_knopf_gesperrt: (() => { const f = doc.getElementById('bild-file'); const a = doc.getElementById('bild-alt'); return !(f && f.files && f.files.length > 0 && a && a.value.trim().length > 0); })(),
+      alt_wert: doc.getElementById('bild-alt') ? doc.getElementById('bild-alt').value : null,
+      liste_count: doc.querySelectorAll('#bilder-list-container .bild-item').length,
+      requests: requests.slice(vor).map(r => `${r.m} ${r.p} ${r.s} ${r.body && typeof r.body === 'object' ? JSON.stringify(r.body) : ''}`),
+    });
+    out.start = sicht(requests.length);
+    out.schritte = [];
+    for (const op of arg.ops || []) {
+      const vor = requests.length;
+      if (op.op === 'tippen_alt') { const inp = doc.getElementById('bild-alt'); if (inp) { inp.value = op.wert; inp.dispatchEvent(new win.Event('input', {bubbles: true})); } }
+      if (op.op === 'datei_waehlen') {
+        const inp = doc.getElementById('bild-file');
+        if (inp) {
+          const fake = {name: op.name || 'test.png', size: op.size || 100000, type: op.type || 'image/png'};
+          Object.defineProperty(inp, 'files', {value: [fake], configurable: true});
+          inp.dispatchEvent(new win.Event('change', {bubbles: true}));
+        }
+      }
+      if (op.op === 'hochladen') {
+        const form = doc.getElementById('bild-upload-form');
+        if (form) {
+          form.dispatchEvent(new win.Event('submit', {bubbles: true, cancelable: true}));
+          await sleep(1200);
+        }
+      }
+      if (op.op === 'loeschen') {
+        const items = [...doc.querySelectorAll('#bilder-list-container .bild-item')];
+        const item = items.find(x => x.dataset.bildId === String(op.bild_id));
+        if (!item) throw new Error('Bild nicht gefunden: ' + op.bild_id);
+        const btn = [...item.querySelectorAll('button')].find(b => b.textContent.includes('Löschen'));
+        btn.click(); await sleep(900);
+      }
+      out.schritte.push({op, zustand: sicht(vor)});
+    }
+    if (arg.mandant_speichern || arg.check_mandant) {
+      await klick(arg.mandant_name);
+      await sleep(600);
+      out.mandant = {
+        logo_optionen: doc.getElementById('edit-logo_bild_id') ? [...doc.getElementById('edit-logo_bild_id').options].map(o => ({value: o.value, text: o.textContent})) : null,
+        logo_wert: doc.getElementById('edit-logo_bild_id') ? doc.getElementById('edit-logo_bild_id').value : null,
+        balken_primaer_checked: doc.getElementById('edit-balken_primaer') ? doc.getElementById('edit-balken_primaer').checked : null,
+        balken_farbe_sichtbar: doc.getElementById('balken-farbe-wrapper') ? doc.getElementById('balken-farbe-wrapper').style.display !== 'none' : null,
+        balken_farbe_wert: doc.getElementById('edit-balken_farbe') ? doc.getElementById('edit-balken_farbe').value : null,
+      };
+    }
+    if (arg.mandant_speichern) {
+      if (arg.mandant_speichern.logo_bild_id !== undefined) doc.getElementById('edit-logo_bild_id').value = arg.mandant_speichern.logo_bild_id || '';
+      if (arg.mandant_speichern.balken_primaer !== undefined) {
+        const cb = doc.getElementById('edit-balken_primaer');
+        cb.checked = arg.mandant_speichern.balken_primaer;
+        cb.dispatchEvent(new win.Event('change', {bubbles: true}));
+      }
+      if (arg.mandant_speichern.balken_farbe !== undefined) doc.getElementById('edit-balken_farbe').value = arg.mandant_speichern.balken_farbe;
+      const vor = requests.length;
+      doc.getElementById('details-form').dispatchEvent(new win.Event('submit', {bubbles: true, cancelable: true}));
+      await sleep(1500);
+      out.speichern = {
+        requests: requests.slice(vor).map(r => `${r.m} ${r.p} ${r.s}`),
+        put_design: (requests.slice(vor).find(r => r.m === 'PUT') || {body: {design: {}}}).body.design,
+        toast: toastText(),
+      };
+    }
+  }
   out.toast = toastText();
   out.fehler_js = fehler.slice(0, 5);
   return out;

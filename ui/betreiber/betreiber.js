@@ -41,7 +41,14 @@ async function apiCall(path, options = {}) {
     }
 
     if (!response.ok) {
-        if (response.status === 401 || response.status === 403) {
+        if (response.status === 401) {
+            throw new Error('Bitte im Portal als Betreiber anmelden');
+        }
+        if (response.status === 403) {
+            // 403 mit meldung -> meldung anzeigen; ohne meldung (oder error="forbidden") -> Anmelde-Text
+            if (data.meldung) {
+                throw new Error(data.meldung);
+            }
             throw new Error('Bitte im Portal als Betreiber anmelden');
         }
         throw new Error(data.meldung || data.error || 'Ein Fehler ist aufgetreten');
@@ -301,6 +308,8 @@ async function showMandantDetails(mandantId, tab = 'details') {
             renderNewsletter(m);
         } else if (tab === 'import') {
             renderImport(m);
+        } else if (tab === 'bilder') {
+            renderBilder(m);
         } else if (tab === 'ki') {
             renderMandantKI(m);
         } else {
@@ -315,7 +324,7 @@ function renderTabs(m, card) {
     const tabsNav = document.createElement('div');
     tabsNav.style.marginBottom = '1.5rem';
     tabsNav.style.borderBottom = '1px solid var(--color-border)';
-    const tabs = [{id: 'details', label: 'Einstellungen'}, {id: 'versand', label: 'Versand'}, {id: 'newsletter', label: 'Newsletter'}, {id: 'abonnenten', label: 'Abonnenten'}, {id: 'import', label: 'Import'}, {id: 'ki', label: 'KI'}];
+    const tabs = [{id: 'details', label: 'Einstellungen'}, {id: 'versand', label: 'Versand'}, {id: 'newsletter', label: 'Newsletter'}, {id: 'abonnenten', label: 'Abonnenten'}, {id: 'import', label: 'Import'}, {id: 'bilder', label: 'Bilder'}, {id: 'ki', label: 'KI'}];
     tabs.forEach(tab => {
         const btn = document.createElement('button');
         btn.textContent = tab.label;
@@ -427,7 +436,91 @@ function renderMandantDetails(m) {
         fieldGroup.appendChild(wrapper);
         farbGroup.appendChild(fieldGroup);
     });
+
+    // Balkenfarbe (Newsletter-Layout)
+    const balkenFarbeGroup = document.createElement('div');
+    balkenFarbeGroup.className = 'form-group';
+    balkenFarbeGroup.style.marginBottom = '0.75rem';
+    const balkenFarbeLabel = document.createElement('label');
+    balkenFarbeLabel.textContent = 'Balkenfarbe (Newsletter)';
+    balkenFarbeGroup.appendChild(balkenFarbeLabel);
+
+    // Checkbox "Primärfarbe verwenden"
+    const balkenPrimaerCheckbox = document.createElement('input');
+    balkenPrimaerCheckbox.type = 'checkbox';
+    balkenPrimaerCheckbox.id = 'edit-balken_primaer';
+    balkenPrimaerCheckbox.checked = !m.design.balken_farbe;
+    const balkenPrimaerLabel = document.createElement('label');
+    balkenPrimaerLabel.style.display = 'block';
+    balkenPrimaerLabel.style.marginBottom = '0.5rem';
+    balkenPrimaerLabel.appendChild(balkenPrimaerCheckbox);
+    balkenPrimaerLabel.appendChild(document.createTextNode(' Primärfarbe verwenden'));
+    balkenFarbeGroup.appendChild(balkenPrimaerLabel);
+
+    const balkenFarbeWrapper = document.createElement('div');
+    balkenFarbeWrapper.className = 'color-input-wrapper';
+    balkenFarbeWrapper.id = 'balken-farbe-wrapper';
+    balkenFarbeWrapper.style.display = m.design.balken_farbe ? 'flex' : 'none';
+    const balkenFarbeInput = document.createElement('input');
+    balkenFarbeInput.type = 'color';
+    balkenFarbeInput.id = 'edit-balken_farbe';
+    balkenFarbeInput.value = m.design.balken_farbe || m.design.farbe_primaer || '#000000';
+    balkenFarbeWrapper.appendChild(balkenFarbeInput);
+    const balkenFarbeHex = document.createElement('span');
+    balkenFarbeHex.className = 'color-hex-display';
+    balkenFarbeHex.textContent = m.design.balken_farbe || m.design.farbe_primaer || '#000000';
+    balkenFarbeWrapper.appendChild(balkenFarbeHex);
+    balkenFarbeInput.addEventListener('input', () => {
+        balkenFarbeHex.textContent = balkenFarbeInput.value;
+    });
+    balkenFarbeGroup.appendChild(balkenFarbeWrapper);
+
+    // Toggle Farbfeld
+    balkenPrimaerCheckbox.addEventListener('change', () => {
+        balkenFarbeWrapper.style.display = balkenPrimaerCheckbox.checked ? 'none' : 'flex';
+    });
+
+    farbGroup.appendChild(balkenFarbeGroup);
     form.appendChild(farbGroup);
+
+    // Logo aus Bildern (Newsletter-Layout)
+    const logoGroup = document.createElement('div');
+    logoGroup.className = 'form-group';
+    const logoLabel = document.createElement('label');
+    logoLabel.textContent = 'Logo (Newsletter)';
+    logoGroup.appendChild(logoLabel);
+    const logoSelect = document.createElement('select');
+    logoSelect.id = 'edit-logo_bild_id';
+    const logoEmptyOpt = document.createElement('option');
+    logoEmptyOpt.value = '';
+    logoEmptyOpt.textContent = '(kein Bild / logo_url nutzen)';
+    logoSelect.appendChild(logoEmptyOpt);
+    logoSelect.disabled = true;
+    logoGroup.appendChild(logoSelect);
+    const logoHint = document.createElement('small');
+    logoHint.textContent = 'Bilder erst im Tab "Bilder" hochladen';
+    logoHint.style.color = '#6b7280';
+    logoGroup.appendChild(logoHint);
+    form.appendChild(logoGroup);
+
+    // Bilder für Logo-Auswahl laden
+    (async () => {
+        try {
+            const bilder = await apiCall(`/mandanten/${m.id}/bilder`);
+            logoSelect.disabled = false;
+            if (bilder && bilder.length > 0) {
+                bilder.forEach(b => {
+                    const opt = document.createElement('option');
+                    opt.value = b.id;
+                    opt.textContent = `${b.alt} (${b.breite}×${b.hoehe})`;
+                    opt.selected = m.design.logo_bild_id === b.id;
+                    logoSelect.appendChild(opt);
+                });
+            }
+        } catch (err) {
+            // Bilder-API nicht verfügbar oder leer
+        }
+    })();
 
     // Schrift
     const schriftGroup = document.createElement('div');
@@ -677,7 +770,9 @@ function renderMandantDetails(m) {
             farbe_akzent: document.getElementById('edit-farbe_akzent').value,
             farbe_hintergrund: document.getElementById('edit-farbe_hintergrund').value,
             farbe_text: document.getElementById('edit-farbe_text').value,
+            balken_farbe: document.getElementById('edit-balken_primaer').checked ? '' : document.getElementById('edit-balken_farbe').value,
             schrift: document.getElementById('edit-schrift').value,
+            logo_bild_id: document.getElementById('edit-logo_bild_id').value ? parseInt(document.getElementById('edit-logo_bild_id').value) : null,
             logo_url: document.getElementById('edit-logo_url').value.trim(),
             absender_name: document.getElementById('edit-absender_name').value.trim(),
             absender_adresse: document.getElementById('edit-absender_adresse').value.trim(),
@@ -2777,6 +2872,252 @@ async function importDurchfuehren(m) {
     } catch (err) {
         errorDiv.textContent = err.message;
         errorDiv.classList.remove('hidden');
+    }
+}
+
+// Bilder-Verwaltung (Newsletter-Layout Etappe 1)
+// API: POST/GET/DELETE /api/v1/betreiber/mandanten/<id>/bilder
+async function renderBilder(m) {
+    const main = document.getElementById('main');
+    const card = document.createElement('div');
+    card.className = 'card';
+
+    const title = document.createElement('h2');
+    title.textContent = m.name;
+    card.appendChild(title);
+
+    renderTabs(m, card);
+
+    const subtitle = document.createElement('h3');
+    subtitle.textContent = 'Bilder';
+    card.appendChild(subtitle);
+
+    // Upload-Formular
+    renderBilderUpload(m, card);
+
+    // Bilder-Liste
+    const listContainer = document.createElement('div');
+    listContainer.id = 'bilder-list-container';
+    card.appendChild(listContainer);
+
+    main.innerHTML = '';
+    main.appendChild(card);
+
+    await loadBilderListe(m, listContainer);
+}
+
+function renderBilderUpload(m, card) {
+    const section = document.createElement('div');
+    section.style.marginBottom = '2rem';
+    section.style.padding = '1.5rem';
+    section.style.background = '#f9fafb';
+    section.style.borderRadius = '6px';
+
+    const uploadTitle = document.createElement('h4');
+    uploadTitle.textContent = 'Bild hochladen';
+    uploadTitle.style.marginTop = '0';
+    section.appendChild(uploadTitle);
+
+    const form = document.createElement('form');
+    form.id = 'bild-upload-form';
+
+    const fileGroup = document.createElement('div');
+    fileGroup.className = 'form-group';
+    const fileLabel = document.createElement('label');
+    fileLabel.textContent = 'Bilddatei *';
+    fileGroup.appendChild(fileLabel);
+    const fileInput = document.createElement('input');
+    fileInput.type = 'file';
+    fileInput.id = 'bild-file';
+    fileInput.accept = 'image/jpeg,image/png,image/webp';
+    fileInput.required = true;
+    fileGroup.appendChild(fileInput);
+    const fileHelp = document.createElement('small');
+    fileHelp.textContent = 'JPG, PNG oder WebP, maximal 5 MB';
+    fileHelp.style.color = '#6b7280';
+    fileGroup.appendChild(fileHelp);
+    form.appendChild(fileGroup);
+
+    const altGroup = document.createElement('div');
+    altGroup.className = 'form-group';
+    const altLabel = document.createElement('label');
+    altLabel.textContent = 'Alt-Text (Bildbeschreibung) *';
+    altGroup.appendChild(altLabel);
+    const altInput = document.createElement('input');
+    altInput.type = 'text';
+    altInput.id = 'bild-alt';
+    altInput.required = true;
+    altInput.minLength = 1;
+    altInput.maxLength = 150;
+    altInput.placeholder = 'z. B. Logo der Firma Muster';
+    altInput.style.width = '100%';
+    altGroup.appendChild(altInput);
+    const altHelp = document.createElement('small');
+    altHelp.textContent = '1-150 Zeichen';
+    altHelp.style.color = '#6b7280';
+    altGroup.appendChild(altHelp);
+    form.appendChild(altGroup);
+
+    fileInput.addEventListener('change', () => {
+        const file = fileInput.files[0];
+        if (file && file.size > 5 * 1024 * 1024) {
+            showToast('Datei zu groß (maximal 5 MB)', 'error');
+            fileInput.value = '';
+        }
+    });
+
+    const errorDiv = document.createElement('div');
+    errorDiv.id = 'bild-upload-error';
+    errorDiv.className = 'error hidden';
+    form.appendChild(errorDiv);
+
+    const submitBtn = document.createElement('button');
+    submitBtn.type = 'submit';
+    submitBtn.className = 'btn btn-primary';
+    submitBtn.textContent = 'Hochladen';
+    form.appendChild(submitBtn);
+
+    form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        errorDiv.className = 'error hidden';
+
+        const file = fileInput.files[0];
+        const alt = altInput.value.trim();
+
+        if (!file || !alt || alt.length < 1 || alt.length > 150) {
+            errorDiv.textContent = 'Bitte Datei und Alt-Text (1-150 Zeichen) angeben.';
+            errorDiv.className = 'error';
+            return;
+        }
+
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('alt', alt);
+
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Wird hochgeladen...';
+
+        try {
+            const response = await fetch(`${API_BASE}/mandanten/${m.id}/bilder`, {
+                method: 'POST',
+                credentials: 'same-origin',
+                body: formData
+            });
+
+            let data;
+            try {
+                data = await response.json();
+            } catch (e) {
+                throw new Error('Keine Antwort vom Server');
+            }
+
+            if (!response.ok) {
+                throw new Error(data.meldung || data.error || 'Fehler beim Hochladen');
+            }
+
+            showToast('Bild erfolgreich hochgeladen', 'success');
+            fileInput.value = '';
+            altInput.value = '';
+            await loadBilderListe(m, document.getElementById('bilder-list-container'));
+        } catch (err) {
+            errorDiv.textContent = err.message;
+            errorDiv.className = 'error';
+        } finally {
+            submitBtn.disabled = false;
+            submitBtn.textContent = 'Hochladen';
+        }
+    });
+
+    section.appendChild(form);
+    card.appendChild(section);
+}
+
+async function loadBilderListe(m, container) {
+    container.innerHTML = '';
+    const loadingDiv = document.createElement('div');
+    loadingDiv.className = 'loading';
+    loadingDiv.textContent = 'Lade Bilder...';
+    container.appendChild(loadingDiv);
+
+    try {
+        const data = await apiCall(`/mandanten/${m.id}/bilder`);
+        loadingDiv.remove();
+
+        if (!data || data.length === 0) {
+            const empty = document.createElement('p');
+            empty.textContent = 'Noch keine Bilder hochgeladen.';
+            empty.style.color = '#6b7280';
+            container.appendChild(empty);
+            return;
+        }
+
+        const grid = document.createElement('div');
+        grid.style.display = 'grid';
+        grid.style.gridTemplateColumns = 'repeat(auto-fill, minmax(200px, 1fr))';
+        grid.style.gap = '1rem';
+
+        data.forEach(bild => {
+            const item = document.createElement('div');
+            item.style.border = '1px solid var(--color-border)';
+            item.style.borderRadius = '6px';
+            item.style.padding = '0.75rem';
+            item.style.background = '#fff';
+
+            const img = document.createElement('img');
+            img.src = bild.url;
+            img.alt = bild.alt;
+            img.style.width = '100%';
+            img.style.borderRadius = '4px';
+            img.style.marginBottom = '0.5rem';
+            item.appendChild(img);
+
+            const altText = document.createElement('div');
+            altText.textContent = bild.alt;
+            altText.style.fontWeight = '600';
+            altText.style.marginBottom = '0.25rem';
+            item.appendChild(altText);
+
+            const size = document.createElement('div');
+            size.textContent = `${bild.breite}×${bild.hoehe} px, ${Math.round(bild.groesse_bytes / 1024)} KB`;
+            size.style.fontSize = '0.875rem';
+            size.style.color = '#6b7280';
+            item.appendChild(size);
+
+            if (bild.in_verwendung) {
+                const usage = document.createElement('div');
+                usage.textContent = 'In Verwendung';
+                usage.style.color = '#059669';
+                usage.style.fontSize = '0.875rem';
+                usage.style.fontWeight = '600';
+                usage.style.marginTop = '0.25rem';
+                item.appendChild(usage);
+            }
+
+            const deleteBtn = document.createElement('button');
+            deleteBtn.type = 'button';
+            deleteBtn.className = 'btn btn-secondary';
+            deleteBtn.textContent = 'Löschen';
+            deleteBtn.style.width = '100%';
+            deleteBtn.style.marginTop = '0.5rem';
+            deleteBtn.addEventListener('click', async () => {
+                if (!confirm(`Bild "${bild.alt}" wirklich löschen?`)) return;
+                try {
+                    await apiCall(`/mandanten/${m.id}/bilder/${bild.id}`, { method: 'DELETE' });
+                    showToast('Bild gelöscht', 'success');
+                    await loadBilderListe(m, container);
+                } catch (err) {
+                    showToast(err.message, 'error');
+                }
+            });
+            item.appendChild(deleteBtn);
+
+            grid.appendChild(item);
+        });
+
+        container.appendChild(grid);
+    } catch (err) {
+        loadingDiv.textContent = 'Fehler: ' + err.message;
+        loadingDiv.style.color = 'var(--color-error)';
     }
 }
 
