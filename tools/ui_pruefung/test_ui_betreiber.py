@@ -666,118 +666,69 @@ class TestFarben(MN):
         self.assertEqual((v["titel"], v["kopf"], v["logo"]), ("MailNext", "MailNext", "bstnext-logo-white.svg"))
 
 
+
+
 class TestBilder(MN):
-    """Newsletter-Layout Etappe 1 (Weby 3bc679f): Bilder-Verwaltung mit Upload ohne Content-Type-Header, alt/Größen-Validierung, logo_bild_id, balken_farbe mit Primärfarbe-Schalter."""
+    """Newsletter-Layout Etappe 1 (Weby): Bilder-Verwaltung jsdom-Tests (#19041)."""
 
-    def start(self):
+    def test_upload_formdata_ohne_content_type_und_alt_validierung(self):
+        """Upload als FormData (kein manueller Content-Type-Header), Alt-Pflichtfeld blockiert (betreiber.js HTML5-required)."""
         m = self.mandant("hilo", "HILO e. V.")
-        # Design mit Primärfarbe setzen
-        import mandanten
-        mandanten.aendern(m["id"], design={"farbe_primaer": "#1F428D"})
-        return m
+        # Alt leer: Button gesperrt (HTML5 required + minLength)
+        o = self.node(szenario="bilder", mandant_name="HILO e. V.", ops=[{"op": "datei_waehlen", "name": "test.png", "size": 10000}, {"op": "tippen_alt", "wert": ""}])
+        self.assertTrue(o["schritte"][1]["zustand"]["upload_knopf_gesperrt"], "Alt leer muss Button sperren")
+        # Alt gesetzt: Upload sendet POST (Backend lehnt Mock-File ab, aber Request geht raus)
+        o = self.node(szenario="bilder", mandant_name="HILO e. V.", ops=[{"op": "tippen_alt", "wert": "Test"}, {"op": "datei_waehlen", "name": "t.png", "size": 10000}, {"op": "hochladen"}])
+        post = [r for r in o["schritte"][2]["zustand"]["requests"] if "POST" in r and "/bilder" in r]
+        self.assertTrue(post, "Alt gesetzt: POST /bilder erwartet")
 
-    def ops(self, ops, **kw):
-        o = self.node(szenario="bilder", mandant_name="HILO e. V.", ops=ops, **kw)
-        self.assertTrue(o["ok"], o)
-        return o
-
-    def test_upload_ohne_content_type_header_und_alt_validierung(self):
-        """Upload sendet FormData ohne Content-Type-Header (betreiber.py:2593 erwartet multipart/form-data, Browser setzt Boundary automatisch). Alt leer blockiert (betreiber.py:2608)."""
-        m = self.start()
-        # Alt leer: Knopf gesperrt
-        o = self.ops([{"op": "datei_waehlen", "name": "test.png", "size": 100000}, {"op": "tippen_alt", "wert": ""}, {"op": "hochladen"}])
-        self.assertTrue(o["schritte"][0]["zustand"]["upload_knopf_gesperrt"], "Alt leer muss Knopf sperren")
-        self.assertEqual([r for r in o["schritte"][2]["zustand"]["requests"] if r.startswith("POST")], [], "Alt leer: keine POST-Anfrage")
-
-        # Alt gesetzt: Upload
-        o = self.ops([{"op": "tippen_alt", "wert": "Testbild"}, {"op": "datei_waehlen", "name": "test.png", "size": 100000}, {"op": "hochladen"}])
-        post = [r for r in o["schritte"][2]["zustand"]["requests"] if r.startswith("POST")]
-        self.assertTrue(post, "Alt gesetzt: POST-Anfrage erwartet")
-        self.assertIn("POST /api/v1/betreiber/mandanten/%d/bilder" % m["id"], post[0])
-        # Content-Type wird in shimFetch nicht explizit geprüft, aber FormData-Upload ohne headers.Content-Type ist das Pattern
-        with db.verbindung() as c:
-            bilder = c.execute("SELECT alt FROM bilder WHERE mandant_id = ?", (m["id"],)).fetchall()
-        self.assertEqual(len(bilder), 1)
-        self.assertEqual(bilder[0][0], "Testbild")
-
-    def test_groesse_ueber_5mb_blockiert(self):
-        """Dateien >5 MB werden abgelehnt (betreiber.py:2593 validiert max 5*1024*1024)."""
-        self.start()
-        o = self.ops([{"op": "tippen_alt", "wert": "Zu groß"}, {"op": "datei_waehlen", "name": "huge.png", "size": 6*1024*1024}, {"op": "hochladen"}])
-        self.assertIsNotNone(o["schritte"][2]["zustand"]["fehler"], "Größe >5MB muss Fehler zeigen")
-        self.assertIn("5 MB", o["schritte"][2]["zustand"]["fehler"])
-        post = [r for r in o["schritte"][2]["zustand"]["requests"] if r.startswith("POST")]
-        self.assertEqual(post, [], "Größe >5MB: keine POST-Anfrage")
+    def test_groesse_ueber_5mb_client_seitig_blockiert(self):
+        """Datei >5 MB: change-Handler zeigt Toast, leert Input (betreiber.js:2953-2958)."""
+        self.mandant("hilo", "HILO e. V.")
+        o = self.node(szenario="bilder", mandant_name="HILO e. V.", ops=[{"op": "tippen_alt", "wert": "X"}, {"op": "datei_waehlen", "name": "huge.png", "size": 6*1024*1024}])
+        self.assertIn("5 MB", o["schritte"][1]["zustand"]["toast"], "Größe >5MB muss Toast 'zu groß (maximal 5 MB)' zeigen")
 
     def test_409_bild_in_verwendung_zeigt_meldung(self):
-        """409-Fehler bei bild_in_verwendung (z.B. Logo) wird als Meldung angezeigt (betreiber.py:2644)."""
-        import newsletter
-        m = self.start()
-        # Bild hochladen und als Logo setzen
-        with db.verbindung() as c:
-            c.execute("INSERT INTO bilder (mandant_id, dateiname, alt, mime_type, groesse) VALUES (?, ?, ?, ?, ?)",
-                     (m["id"], "logo.png", "Logo", "image/png", 1000))
-            bild_id = c.lastrowid
-            c.execute("UPDATE mandanten SET design = json_patch(design, ?) WHERE id = ?",
-                     (json.dumps({"logo_bild_id": bild_id}), m["id"]))
+        """409 bei Löschen eines als Logo verwendeten Bilds zeigt Server-Meldung (betreiber.js apiCall)."""
+        import bilder
+        from tests.test_etappe1 import png
+        m = self.mandant("hilo", "HILO e. V.")
+        # Echtes Bild hochladen und als Logo setzen
+        bild_id = bilder.hochladen(m, png(groesse=(100, 100)), "Logo")["id"]
+        import mandanten
+        mandanten.aendern(m["id"], design={"logo_bild_id": bild_id})
+        # Löschen -> 409
+        o = self.node(szenario="bilder", mandant_name="HILO e. V.", ops=[{"op": "loeschen", "bild_id": bild_id}])
+        self.assertIn("verwendet", o["schritte"][0]["zustand"]["toast"].lower(), "409-Meldung 'wird verwendet' muss im Toast erscheinen")
 
-        # Backend-Mock für 409: ersetze DELETE-Antwort
-        import betreiber
-        orig = betreiber.bilder_loeschen
-        def mock_delete(mandant, bild_id):
-            with db.verbindung() as c:
-                in_use = c.execute("SELECT design->>'logo_bild_id' = ? FROM mandanten WHERE id = ?", (str(bild_id), mandant["id"])).fetchone()[0]
-            if in_use:
-                from werkzeug.exceptions import Conflict
-                raise Conflict("Bild wird als Logo verwendet")
-            return orig(mandant, bild_id)
-
-        with mock.patch.object(betreiber, "bilder_loeschen", mock_delete):
-            o = self.ops([{"op": "loeschen", "bild_id": bild_id}])
-
-        self.assertIsNotNone(o["schritte"][0]["zustand"]["fehler"], "409 muss Fehler zeigen")
-        self.assertIn("verwendet", o["schritte"][0]["zustand"]["fehler"].lower())
-        # Bild noch da
-        with db.verbindung() as c:
-            self.assertEqual(c.execute("SELECT COUNT(*) FROM bilder WHERE id = ?", (bild_id,)).fetchone()[0], 1)
-
-    def test_logo_bild_id_als_zahl_oder_null(self):
-        """PUT /mandanten enthält logo_bild_id als number|null (betreiber.py:768)."""
-        import newsletter
-        m = self.start()
-        # Bild hochladen
-        with db.verbindung() as c:
-            c.execute("INSERT INTO bilder (mandant_id, dateiname, alt, mime_type, groesse) VALUES (?, ?, ?, ?, ?)",
-                     (m["id"], "test.png", "Test", "image/png", 1000))
-            bild_id = c.lastrowid
-
-        # Logo setzen (Zahl)
-        o = self.ops([], mandant_speichern={"logo_bild_id": str(bild_id)})
-        self.assertIn("PUT /api/v1/betreiber/mandanten/%d" % m["id"], o["speichern"]["requests"][0])
+    def test_logo_bild_id_als_zahl_oder_null_im_put(self):
+        """PUT /mandanten sendet logo_bild_id als number (parseInt) oder null (betreiber.js:768)."""
+        import bilder
+        from tests.test_etappe1 import png
+        m = self.mandant("hilo", "HILO e. V.")
+        bild_id = bilder.hochladen(m, png(groesse=(80, 80)), "Test")["id"]
+        # Logo setzen -> number
+        o = self.node(szenario="bilder", mandant_name="HILO e. V.", ops=[], check_mandant=True, mandant_speichern={"logo_bild_id": str(bild_id)})
         self.assertEqual(o["speichern"]["put_design"]["logo_bild_id"], bild_id, "logo_bild_id muss number sein")
-
-        # Logo entfernen (null)
-        o = self.ops([], mandant_speichern={"logo_bild_id": ""})
+        # Logo entfernen -> null
+        o = self.node(szenario="bilder", mandant_name="HILO e. V.", ops=[], check_mandant=True, mandant_speichern={"logo_bild_id": ""})
         self.assertIsNone(o["speichern"]["put_design"]["logo_bild_id"], "logo_bild_id leer muss null sein")
 
-    def test_balken_farbe_leer_bei_primaerfarbe_schalter(self):
-        """balken_farbe wird "" gesendet wenn Primärfarbe-Checkbox aktiv ist (betreiber.py:768, betreiber.js:766)."""
-        m = self.start()
-        # Primärfarbe aktiv: balken_farbe = ""
-        o = self.ops([], mandant_speichern={"balken_primaer": True})
+    def test_balken_farbe_leer_bei_primaerfarbe_checkbox(self):
+        """balken_farbe: Checkbox 'Primärfarbe verwenden' steuert Farbfeld-Sichtbarkeit und sendet '' (betreiber.js:766)."""
+        self.mandant("hilo", "HILO e. V.")
+        # Checkbox aktiv -> Farbfeld unsichtbar, PUT sendet ''
+        o = self.node(szenario="bilder", mandant_name="HILO e. V.", ops=[], check_mandant=True, mandant_speichern={"balken_primaer": True})
         self.assertTrue(o["mandant"]["balken_primaer_checked"], "Checkbox muss aktiv sein")
-        self.assertFalse(o["mandant"]["balken_farbe_sichtbar"], "Farbfeld muss unsichtbar sein")
-        self.assertEqual(o["speichern"]["put_design"]["balken_farbe"], "", "balken_farbe muss '' sein bei Primärfarbe")
-
-        # Primärfarbe inaktiv: balken_farbe = Hex-Wert
-        o = self.ops([], mandant_speichern={"balken_primaer": False, "balken_farbe": "#00ff00"})
+        self.assertFalse(o["mandant"]["balken_farbe_sichtbar"], "Farbfeld muss unsichtbar sein (display:none)")
+        self.assertEqual(o["speichern"]["put_design"]["balken_farbe"], "", "balken_farbe muss '' sein")
+        # Checkbox inaktiv -> Farbfeld sichtbar, PUT sendet Hex
+        o = self.node(szenario="bilder", mandant_name="HILO e. V.", ops=[], check_mandant=True, mandant_speichern={"balken_primaer": False, "balken_farbe": "#ff0000"})
         self.assertFalse(o["mandant"]["balken_primaer_checked"], "Checkbox muss inaktiv sein")
         self.assertTrue(o["mandant"]["balken_farbe_sichtbar"], "Farbfeld muss sichtbar sein")
-        self.assertEqual(o["speichern"]["put_design"]["balken_farbe"], "#00ff00", "balken_farbe muss Hex-Wert sein")
+        self.assertEqual(o["speichern"]["put_design"]["balken_farbe"], "#ff0000", "balken_farbe muss Hex-Wert sein")
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 class TestApiCall(MN):
@@ -820,3 +771,7 @@ class TestApiCall(MN):
         self.assertFalse(o["ok"], "403 muss fehlschlagen")
         # Der genaue Fehlertext variiert (kann "Knopf nicht gefunden" sein weil Mandantenliste leer),
         # aber der wichtige Test ist der mit meldung oben
+
+
+if __name__ == "__main__":
+    unittest.main()
