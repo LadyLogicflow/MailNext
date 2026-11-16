@@ -35,9 +35,9 @@ URL = re.compile(r"https://[^\s<>\"']+")
 class Fehler(Exception):
     """Fehler mit Code für die Betreiber-Antwort (status = HTTP-Status)."""
 
-    def __init__(self, code, meldung, status=409):
+    def __init__(self, code, meldung, status=409, feld=None):
         super().__init__(code)
-        self.code, self.meldung, self.status = code, meldung, status
+        self.code, self.meldung, self.status, self.feld = code, meldung, status, feld
 
 
 def _iso(dt):
@@ -68,7 +68,7 @@ def text_zu_html(text: str) -> str:
     return "\n".join(absaetze)
 
 
-def darstellen(mandant: dict, betreff: str, text: str, persoenliches_token: str | None):
+def darstellen(mandant: dict, betreff: str, text: str, persoenliches_token: str | None, blocks: dict | None = None):
     """(Betreff, Text, HTML, Kopfzeilen). Ohne Token (Testmail, Vorschau) zeigen die Links auf eine ungültige Vorschau."""
     token = persoenliches_token or "u1.vorschau.vorschau"
     einstellungen = mailer.link_einstellungen(mandant, token)
@@ -77,15 +77,20 @@ def darstellen(mandant: dict, betreff: str, text: str, persoenliches_token: str 
     farbe = mandant["design"]["farbe_primaer"]
     fuss_html = ('<p style="font-size:13px;margin-top:24px">Sie erhalten diese Mail, weil Sie sich zum Newsletter angemeldet haben. '
                  '<a href="%s" style="color:%s">Einstellungen ändern oder abmelden</a></p>' % (html.escape(einstellungen, quote=True), farbe))
-    html_text = mailer.html_rahmen(mandant, betreff, text_zu_html(text) + fuss_html)
+    if blocks is not None:                                    # Layout-Newsletter (Etappe 2): text ist die abgeleitete Klartext-Fassung
+        import layout
+        html_text = layout.html_rendern(mandant, betreff, blocks, einstellungen)
+    else:
+        html_text = mailer.html_rahmen(mandant, betreff, text_zu_html(text) + fuss_html)
     header = {"List-Unsubscribe": "<%s>" % eins_klick, "List-Unsubscribe-Post": "List-Unsubscribe=One-Click"}
     return betreff, text.strip() + fuss_text, html_text, header
 
 
 # ----- Entwürfe -----
 
-def _hash(betreff, text, ziel, segment) -> str:
-    roh = json.dumps([betreff, text, ziel, segment], ensure_ascii=False, sort_keys=True)
+def _hash(betreff, text, ziel, segment, blocks=None) -> str:
+    # Textentwürfe behalten ihren bisherigen Hash; Layout-Entwürfe binden die Blöcke (inkl. Bild-Nummern) in die Freigabe ein
+    roh = json.dumps([betreff, text, ziel, segment] if blocks is None else [betreff, text, ziel, segment, blocks], ensure_ascii=False, sort_keys=True)
     return hashlib.sha256(roh.encode("utf-8")).hexdigest()
 
 
@@ -133,23 +138,51 @@ def _inhalt_pruefen(mandant, betreff, text, ziel, segment):
     return betreff, text.strip(), ziel, _segment_pruefen(mandant, segment)
 
 
+def _blocks_pruefen(mandant, blocks):
+    """Layout-Blöcke prüfen; Fehler als newsletter.Fehler (400) mit Feld. Gibt (bereinigte Blöcke, Klartext) zurück."""
+    import layout
+    try:
+        return layout.pruefen(mandant, blocks)
+    except layout.LayoutFehler as f:
+        raise Fehler(f.code, f.meldung, 400, f.feld)
+
+
+def _blocks_von(z):
+    """Gespeicherte Blöcke eines Layout-Entwurfs, sonst None."""
+    return json.loads(z["blocks"]) if z["format"] == "layout" and z["blocks"] else None
+
+
 def _zeile(mandant_id, entwurf_id):
     with db.verbindung() as c:
         return c.execute("SELECT * FROM entwurf WHERE id=? AND mandant_id=?", (int(entwurf_id), int(mandant_id))).fetchone()
 
 
 def _entwurf_dict(z) -> dict:
-    return {"id": z["id"], "betreff": z["betreff"], "text": z["text"], "ziel": z["ziel"], "segment": json.loads(z["segment"]), "status": z["status"],
+    return {"id": z["id"], "betreff": z["betreff"], "format": z["format"], "blocks": _blocks_von(z), "text": z["text"], "ziel": z["ziel"],
+            "segment": json.loads(z["segment"]), "status": z["status"],
             "content_hash": z["content_hash"], "erstellt": z["erstellt"], "geaendert": z["geaendert"],
             "testmail": {"gesendet_am": z["testmail_am"], "passender_stand": bool(z["testmail_hash"] and z["testmail_hash"] == z["content_hash"])}}
 
 
-def anlegen(mandant: dict, betreff, text, ziel, segment) -> dict:
-    betreff, text, ziel, segment = _inhalt_pruefen(mandant, betreff, text, ziel, segment)
+def anlegen(mandant: dict, betreff, text, ziel, segment, format="text", blocks=None) -> dict:
+    if format not in ("text", "layout"):
+        raise Fehler("format_ungueltig", "format muss text oder layout sein", 400, "format")
+    if format == "layout":
+        if text is not None:
+            raise Fehler("format_passt_nicht", "Ein Layout-Entwurf hat blocks statt text", 400, "text")
+        blocks, text = _blocks_pruefen(mandant, blocks)
+        betreff, text, ziel, segment = _inhalt_pruefen(mandant, betreff, text, ziel, segment)
+        blocks_json = json.dumps(blocks, ensure_ascii=False)
+    else:
+        if blocks is not None:
+            raise Fehler("format_passt_nicht", "Ein Text-Entwurf hat text statt blocks", 400, "blocks")
+        betreff, text, ziel, segment = _inhalt_pruefen(mandant, betreff, text, ziel, segment)
+        blocks_json = None
     zeit = _iso(_jetzt())
     with db.verbindung() as c:
-        cur = c.execute("INSERT INTO entwurf(mandant_id, betreff, text, ziel, segment, content_hash, erstellt, geaendert) VALUES (?,?,?,?,?,?,?,?)",
-                        (mandant["id"], betreff, text, ziel, json.dumps(segment), _hash(betreff, text, ziel, segment), zeit, zeit))
+        cur = c.execute("INSERT INTO entwurf(mandant_id, betreff, text, ziel, segment, content_hash, erstellt, geaendert, format, blocks) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                        (mandant["id"], betreff, text, ziel, json.dumps(segment), _hash(betreff, text, ziel, segment, blocks if format == "layout" else None), zeit, zeit,
+                         format, blocks_json))
     return lesen(mandant, cur.lastrowid)
 
 
@@ -161,20 +194,29 @@ def lesen(mandant: dict, entwurf_id: int) -> dict | None:
 def liste(mandant: dict) -> list:
     with db.verbindung() as c:
         zeilen = c.execute("SELECT * FROM entwurf WHERE mandant_id=? ORDER BY id DESC", (mandant["id"],)).fetchall()
-    return [{k: _entwurf_dict(z)[k] for k in ("id", "betreff", "status", "ziel", "erstellt", "geaendert")} for z in zeilen]
+    return [{k: _entwurf_dict(z)[k] for k in ("id", "betreff", "format", "status", "ziel", "erstellt", "geaendert")} for z in zeilen]
 
 
-def aendern(mandant: dict, entwurf_id: int, betreff, text, ziel, segment) -> dict:
+def aendern(mandant: dict, entwurf_id: int, betreff, text, ziel, segment, blocks=None) -> dict:
     z = _zeile(mandant["id"], entwurf_id)
     if z is None:
         raise Fehler("nicht_gefunden", "Entwurf nicht gefunden", 404)
     if z["status"] != "entwurf":
         raise Fehler("nicht_mehr_aenderbar", "Der Entwurf ist freigegeben und nicht mehr änderbar")
+    layout_entwurf = z["format"] == "layout"
+    if layout_entwurf and text is not None:
+        raise Fehler("format_passt_nicht", "Ein Layout-Entwurf hat blocks statt text", 400, "text")
+    if not layout_entwurf and blocks is not None:
+        raise Fehler("format_passt_nicht", "Ein Text-Entwurf hat text statt blocks", 400, "blocks")
+    neue_blocks = _blocks_von(z)
+    if layout_entwurf:
+        neue_blocks, text = _blocks_pruefen(mandant, blocks if blocks is not None else neue_blocks)
     betreff, text, ziel, segment = _inhalt_pruefen(mandant, betreff if betreff is not None else z["betreff"], text if text is not None else z["text"],
                                                    ziel if ziel is not None else z["ziel"], segment if segment is not None else json.loads(z["segment"]))
     with db.verbindung() as c:
-        c.execute("UPDATE entwurf SET betreff=?, text=?, ziel=?, segment=?, content_hash=?, geaendert=? WHERE id=? AND mandant_id=?",
-                  (betreff, text, ziel, json.dumps(segment), _hash(betreff, text, ziel, segment), _iso(_jetzt()), z["id"], mandant["id"]))
+        c.execute("UPDATE entwurf SET betreff=?, text=?, ziel=?, segment=?, content_hash=?, blocks=?, geaendert=? WHERE id=? AND mandant_id=?",
+                  (betreff, text, ziel, json.dumps(segment), _hash(betreff, text, ziel, segment, neue_blocks if layout_entwurf else None),
+                   json.dumps(neue_blocks, ensure_ascii=False) if layout_entwurf else None, _iso(_jetzt()), z["id"], mandant["id"]))
     return lesen(mandant, entwurf_id)
 
 
@@ -250,7 +292,7 @@ def testmail(mandant: dict, entwurf_id: int, an: str | None, betreiber_email: st
         raise Fehler("adresse_nicht_in_testliste", "Diese Adresse steht nicht in der Testliste", 403)
     if not schluessel.email_gueltig(ziel_adresse):
         raise Fehler("adresse_ungueltig", "Keine gültige Adresse", 400)
-    betreff, text, html_text, header = darstellen(mandant, "[TEST] " + z["betreff"], z["text"], None)
+    betreff, text, html_text, header = darstellen(mandant, "[TEST] " + z["betreff"], z["text"], None, blocks=_blocks_von(z))
     ergebnis = mailer.senden(mandant, ziel_adresse, betreff, text, html_text, header)
     if ergebnis not in ("gesendet", "datei"):
         raise Fehler("versand_nicht_moeglich", "Die Testmail konnte nicht gesendet werden (%s). Versandmodus und Konto des Mandanten prüfen." % ergebnis, 409)
@@ -416,7 +458,7 @@ def lauf() -> dict:
             with db.verbindung() as c:
                 if _gesendet_letzte_stunde(c, m["id"]) >= limit:
                     break
-                z = c.execute("SELECT e.*, w.ziel AS ziel, w.betreff AS betreff, w.text AS text FROM empfaenger e JOIN entwurf w ON w.id=e.entwurf_id "
+                z = c.execute("SELECT e.*, w.ziel AS ziel, w.betreff AS betreff, w.text AS text, w.format AS format, w.blocks AS blocks FROM empfaenger e JOIN entwurf w ON w.id=e.entwurf_id "
                               "WHERE e.mandant_id=? AND e.status='queued' AND w.status IN ('freigegeben','sendet') AND (e.fehler IS NULL OR e.zeit<?) "
                               "ORDER BY e.id LIMIT 1",
                               (m["id"], _iso(_jetzt() - timedelta(minutes=WIEDERHOLUNG_ABSTAND_MINUTEN)))).fetchone()
@@ -447,7 +489,7 @@ def _eine_senden(m: dict, z) -> str:
             return "uebersprungen"
         adresse = abo["email"]
     token = abonnenten.persoenliches_token(abo) if abo is not None else None
-    betreff, text, html_text, header = darstellen(m, z["betreff"], z["text"], token)
+    betreff, text, html_text, header = darstellen(m, z["betreff"], z["text"], token, blocks=_blocks_von(z))
     ergebnis = mailer.senden(m, adresse, betreff, text, html_text, header)
     if ergebnis in ("gesendet", "datei"):
         _setzen(z["id"], "sent", None)

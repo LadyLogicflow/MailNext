@@ -41,6 +41,15 @@ bis 5 MB und 25 Megapixel, Neu-Kodierung ohne EXIF/GPS/Farbprofil, höchstens 16
 `design.logo_bild_id` (Bild des Mandanten oder null) hat Vorrang vor `design.logo_url` im Mail-Kopf; `design.balken_farbe` (#rrggbb, leer = Primärfarbe) ist für das Layout der folgenden Etappen vorbereitet.
 Ein als Logo benutztes Bild lässt sich nicht löschen (409). Das Audit-Log enthält nur Mandant, Bild-Nummer und Größe.
 
+## Layout-Newsletter (ab 0.6.1)
+Entwürfe haben `format` (`text` wie bisher oder `layout`). Ein Layout-Entwurf trägt statt `text` die Blöcke `blocks`: `{"version":1, "balken":{"text","url"}, "text_html", "bilder":[{"bild_id","alt","bildunterschrift","url"}]}`
+(Balken 0-60 Zeichen, Link optional und nur https; 0 bis 6 Bilder des Mandanten, Alt-Text Pflicht 1-150, Unterschrift 0-200; `text_html` höchstens 20 000 Zeichen).
+`text_html` wird serverseitig bereinigt (`textformat.py`): erlaubt sind p, br, strong/b, em/i, h2, h3, ul, ol, li und a (https oder mailto); Zentrierung als `data-ausrichtung="zentriert"`;
+alles andere (Skripte, Stile, Klassen, Handler, Bilder im Text, Kommentare) fällt weg. Die Antwort liefert die BEREINIGTE Fassung. Der Klartext-Teil der Mail wird abgeleitet.
+Die Mail (`layout.py`) ist ein Tabellen-Layout mit 600 px: Kopf mit Logo, Balken, zwei Spalten (Text links, Bilder rechts mit Unterschrift), Fuß mit Abmeldelink; auf schmalen Bildschirmen stapeln die Spalten,
+Dunkelmodus per color-scheme. Der Inhalts-Hash der Freigabe bindet die Blöcke und Bild-Nummern ein (Textentwürfe behalten ihren bisherigen Hash). Bilder, die ein Entwurf nutzt, lassen sich nicht löschen (409).
+Fehlercodes mit `feld`: blocks_ungueltig, bild_unbekannt, zu_viele_bilder, alt_fehlt, url_ungueltig, format_passt_nicht, format_ungueltig.
+
 ## KI-Textverbesserung (ab 0.4.0)
 Auf Klick (nie automatisch) macht Claude (Anthropic, Modell `claude-sonnet-5-5`) einen **Vorschlag** für Betreff und Text eines Newsletter-Entwurfs. Der Vorschlag wird nirgends gespeichert; der Betreiber übernimmt ihn per Klick und speichert den Entwurf wie gewohnt.
 Datenschutz: Je Mandant nur nach Aktivierung (Standard **aus**, Antwort sonst `409 funktion_nicht_aktiv`). An den Dienst gehen ausschließlich Betreff, Text, eine optionale kurze Anweisung und eine feste Systemanweisung, nie Adressen, Abonnentendaten, Mandanten-Kennung oder Betreibername. Text und Antwort stehen nie in Logs oder im Audit (nur Zeitpunkt, Mandant, Zeichenzahlen). Hinweistext für die Oberfläche: `GET /api/v1/betreiber/mandanten/<id>/ki` → `hinweis` (Wortlaut von Irony).

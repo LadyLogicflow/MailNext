@@ -345,7 +345,10 @@ def _nl(f):
         try:
             return f(m, *a, **kw)
         except newsletter.Fehler as fehler:
-            return jsonify({"error": fehler.code, "meldung": fehler.meldung}), fehler.status
+            antwort = {"error": fehler.code, "meldung": fehler.meldung}
+            if fehler.feld:
+                antwort["feld"] = fehler.feld
+            return jsonify(antwort), fehler.status
     return innen
 
 
@@ -362,9 +365,12 @@ def entwuerfe(m):
 @_nl
 def entwurf_anlegen(m):
     d = _json() or {}
-    e = newsletter.anlegen(m, d.get("betreff"), d.get("text"), d.get("ziel", "testliste"), d.get("segment"))
+    e = newsletter.anlegen(m, d.get("betreff"), d.get("text"), d.get("ziel", "testliste"), d.get("segment"), d.get("format", "text"), d.get("blocks"))
     _audit("entwurf_angelegt", "mandant=%s entwurf=%d ziel=%s" % (m["slug"], e["id"], e["ziel"]))
-    return jsonify({"id": e["id"], "content_hash": e["content_hash"]}), 201
+    antwort = {"id": e["id"], "content_hash": e["content_hash"]}
+    if e["format"] == "layout":
+        antwort["blocks"] = e["blocks"]                                  # die BEREINIGTE Fassung
+    return jsonify(antwort), 201
 
 
 @bp.get("/mandanten/<int:mandant_id>/entwuerfe/<int:entwurf_id>")
@@ -383,9 +389,12 @@ def entwurf_lesen(m, entwurf_id):
 @_nl
 def entwurf_aendern(m, entwurf_id):
     d = _json() or {}
-    e = newsletter.aendern(m, entwurf_id, d.get("betreff"), d.get("text"), d.get("ziel"), d.get("segment"))
+    e = newsletter.aendern(m, entwurf_id, d.get("betreff"), d.get("text"), d.get("ziel"), d.get("segment"), d.get("blocks"))
     _audit("entwurf_geaendert", "mandant=%s entwurf=%d" % (m["slug"], entwurf_id))
-    return jsonify({"content_hash": e["content_hash"]})
+    antwort = {"content_hash": e["content_hash"]}
+    if e["format"] == "layout":
+        antwort["blocks"] = e["blocks"]                                  # die BEREINIGTE Fassung
+    return jsonify(antwort)
 
 
 @bp.post("/mandanten/<int:mandant_id>/entwuerfe/<int:entwurf_id>/testmail")

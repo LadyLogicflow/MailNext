@@ -162,8 +162,20 @@ def liste(mandant: dict) -> list:
 
 
 def in_verwendung(mandant: dict, bild_id) -> bool:
-    """Ob das Bild gerade gebraucht wird: als Logo des Mandanten. (Etappe 2 ergänzt Newsletter-Entwürfe, die freigegeben oder versendet sind.)"""
-    return mandant["design"].get("logo_bild_id") == int(bild_id)
+    """Ob das Bild gerade gebraucht wird: als Logo des Mandanten oder in einem Layout-Entwurf (jeder Status: bei freigegebenen und versendeten Newslettern
+    müssen die Bilder weiter laden, bei Entwürfen soll die Freigabe nicht an einem gelöschten Bild scheitern)."""
+    bild_id = int(bild_id)
+    if mandant["design"].get("logo_bild_id") == bild_id:
+        return True
+    import json
+    with db.verbindung() as c:
+        for z in c.execute("SELECT blocks FROM entwurf WHERE mandant_id=? AND format='layout' AND blocks IS NOT NULL", (int(mandant["id"]),)).fetchall():
+            try:
+                if any(b.get("bild_id") == bild_id for b in json.loads(z["blocks"]).get("bilder", [])):
+                    return True
+            except (ValueError, AttributeError):
+                continue
+    return False
 
 
 def loeschen(mandant: dict, bild_id) -> bool:
