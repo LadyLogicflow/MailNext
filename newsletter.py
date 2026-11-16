@@ -157,6 +157,10 @@ def _hash(betreff, text, ziel, segment, blocks=None) -> str:
     return hashlib.sha256(roh.encode("utf-8")).hexdigest()
 
 
+#: Zulässige Werte von segment.tags_modus mit Tags: mindestens einer (oder), alle (und), keiner der gewählten (ausser); ohne tags zusätzlich ohne_tags (nur wer keinen Tag hat).
+TAGS_MODI_MIT_TAGS = ("oder", "und", "ausser")
+
+
 def _segment_pruefen(mandant: dict, segment) -> dict:
     segment = segment or {}
     if not isinstance(segment, dict) or set(segment) - {"rollen", "interessen", "tags", "tags_modus"}:
@@ -182,11 +186,13 @@ def _segment_pruefen(mandant: dict, segment) -> dict:
             raise Fehler("segment_ungueltig", "tags: unbekannter Tag", 400)
         ergebnis["tags"] = sorted({vorhanden[t.strip().lower()] for t in tags})
         modus = segment.get("tags_modus", "oder")
-        if modus not in ("oder", "und"):
-            raise Fehler("segment_ungueltig", "tags_modus muss oder oder und sein", 400)
+        if modus not in TAGS_MODI_MIT_TAGS:
+            raise Fehler("segment_ungueltig", "tags_modus muss oder, und oder ausser sein (ohne_tags darf nicht zusammen mit tags angegeben werden)", 400)
         ergebnis["tags_modus"] = modus
+    elif segment.get("tags_modus") == "ohne_tags":
+        ergebnis["tags_modus"] = "ohne_tags"                       # nur Abonnentinnen ohne jeden Tag; tags darf dabei nicht angegeben sein
     elif segment.get("tags_modus") is not None:
-        raise Fehler("segment_ungueltig", "tags_modus gehört nur zusammen mit tags", 400)
+        raise Fehler("segment_ungueltig", "tags_modus gehört nur zusammen mit tags (außer ohne_tags: dann ohne tags)", 400)
     return ergebnis
 
 
@@ -407,10 +413,17 @@ def _empfaenger_ermitteln(mandant: dict, z) -> list:
             continue
         if segment.get("interessen") and not set(json.loads(r["interessen"] or "[]")) & set(segment["interessen"]):
             continue
-        if segment.get("tags"):
+        modus = segment.get("tags_modus")
+        hat = {t.lower() for t in json.loads(r["tags"] or "[]")}
+        if modus == "ohne_tags":
+            if hat:
+                continue
+        elif segment.get("tags"):
             gewaehlt = {t.lower() for t in segment["tags"]}
-            hat = {t.lower() for t in json.loads(r["tags"] or "[]")}
-            if not (gewaehlt <= hat if segment.get("tags_modus") == "und" else gewaehlt & hat):
+            if modus == "ausser":
+                if gewaehlt & hat:
+                    continue
+            elif not (gewaehlt <= hat if modus == "und" else gewaehlt & hat):
                 continue
         ergebnis.append(("a%d" % r["id"], r["id"], r["email"]))
     return ergebnis
