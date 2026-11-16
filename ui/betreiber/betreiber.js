@@ -1955,7 +1955,7 @@ async function renderAbonnentHinzufuegen(m, card) {
     quelleInput.id = 'abonnent-quelle';
     quelleInput.required = true;
     quelleInput.minLength = 5;
-    quelleInput.maxLength = 200;
+    quelleInput.maxLength = 100;
     quelleInput.placeholder = 'z. B. Papierformular vom 12.11.';
     quelleInput.style.width = '100%';
     quelleGroup.appendChild(quelleInput);
@@ -2018,9 +2018,10 @@ async function renderAbonnentHinzufuegen(m, card) {
         emailInput.style.borderColor = email && !isValid ? 'var(--color-error)' : '';
     });
 
+    // Backend validiert 1-100 Zeichen (betreiber.py Z. 169), UI Mindestlänge 5
     quelleInput.addEventListener('input', () => {
         const quelle = quelleInput.value.trim();
-        const isValid = quelle.length >= 5 && quelle.length <= 200;
+        const isValid = quelle.length >= 5 && quelle.length <= 100;
         quelleInput.style.borderColor = quelle && !isValid ? 'var(--color-error)' : '';
     });
 
@@ -2069,8 +2070,8 @@ async function renderAbonnentHinzufuegen(m, card) {
             return;
         }
 
-        if (quelle.length < 5 || quelle.length > 200) {
-            errorDiv.textContent = 'Quelle/Einwilligung muss zwischen 5 und 200 Zeichen lang sein.';
+        if (quelle.length < 5 || quelle.length > 100) {
+            errorDiv.textContent = 'Quelle/Einwilligung muss zwischen 5 und 100 Zeichen lang sein.';
             errorDiv.className = 'error';
             return;
         }
@@ -2102,36 +2103,52 @@ async function renderAbonnentHinzufuegen(m, card) {
                 body: JSON.stringify(body)
             });
 
-            // Antwort interpretieren
+            // Antwort interpretieren (Backend: betreiber.py Z. 177, abonnenten.importieren)
+            // Antwortfelder: neu, dublette, ungueltig, uebersprungen{abgemeldet, unzustellbar, unbestaetigt, status}
             let message = '';
+            let isSuccess = false;
+
             if (result.neu > 0) {
                 message = `Abonnent erfolgreich hinzugefügt: ${email}`;
+                isSuccess = true;
             } else if (result.dublette > 0) {
                 message = `Die E-Mail-Adresse ${email} ist bereits in der Liste.`;
             } else if (result.uebersprungen && result.uebersprungen.abgemeldet > 0) {
                 message = `Die E-Mail-Adresse ${email} wurde bereits abgemeldet und wird nicht wieder aufgenommen.`;
             } else if (result.uebersprungen && result.uebersprungen.unzustellbar > 0) {
                 message = `Die E-Mail-Adresse ${email} ist als unzustellbar markiert.`;
+            } else if (result.uebersprungen && (result.uebersprungen.unbestaetigt > 0 || result.uebersprungen.status > 0)) {
+                message = `Diese Adresse hat die Anmeldung noch nicht bestätigt und wurde nicht aufgenommen.`;
             } else if (result.ungueltig > 0) {
                 message = `Die E-Mail-Adresse ${email} ist ungültig.`;
             } else {
-                message = 'Abonnent hinzugefügt.';
+                message = 'Unerwartete Antwort vom Server.';
             }
 
-            successDiv.textContent = message;
-            successDiv.className = '';
+            // Nur bei Erfolg (neu > 0) im grünen Erfolgsfeld, sonst Warnung
+            if (isSuccess) {
+                successDiv.textContent = message;
+                successDiv.className = '';
+                showToast(message, 'success');
 
-            // Formular zurücksetzen
-            emailInput.value = '';
-            quelleInput.value = '';
-            if (rolleSelect) rolleSelect.value = '';
-            interessenCheckboxes.forEach(cb => cb.checked = false);
+                // Formular zurücksetzen nur bei Erfolg
+                emailInput.value = '';
+                quelleInput.value = '';
+                if (rolleSelect) rolleSelect.value = '';
+                interessenCheckboxes.forEach(cb => cb.checked = false);
 
-            // Liste neu laden
-            showToast(message, result.neu > 0 ? 'success' : 'info');
-            setTimeout(() => {
-                showMandantDetails(m.id, 'abonnenten');
-            }, 1500);
+                // Liste neu laden
+                setTimeout(() => {
+                    showMandantDetails(m.id, 'abonnenten');
+                }, 1500);
+            } else {
+                // Warnung anzeigen, Eingaben behalten
+                errorDiv.textContent = message;
+                errorDiv.className = 'error';
+                errorDiv.style.background = '#fef3c7';
+                errorDiv.style.color = '#92400e';
+                showToast(message, 'error');
+            }
 
         } catch (err) {
             errorDiv.textContent = err.message;
