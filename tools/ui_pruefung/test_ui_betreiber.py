@@ -690,11 +690,11 @@ class TestBilder(MN):
         """409 bei Löschen eines als Logo verwendeten Bilds zeigt Server-Meldung (betreiber.js apiCall)."""
         m = self.mandant("hilo", "HILO e. V.")
         # Bild direkt in DB einfügen und als Logo setzen
-        with db.verbindung() as c:
-            c.execute("INSERT INTO bild (mandant_id, token, endung, content_type, breite, hoehe, groesse, sha256, alt, erstellt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))",
+        with db.verbindung() as conn:
+            cur = conn.execute("INSERT INTO bild (mandant_id, token, endung, content_type, breite, hoehe, groesse, sha256, alt, erstellt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))",
                      (m["id"], "test123", "png", "image/png", 100, 100, 1000, "a"*64, "Logo"))
-            bild_id = c.lastrowid
-            c.execute("UPDATE mandant SET design = json_patch(design, ?) WHERE id = ?",
+            bild_id = cur.lastrowid
+            conn.execute("UPDATE mandant SET design = json_patch(design, ?) WHERE id = ?",
                      (json.dumps({"logo_bild_id": bild_id}), m["id"]))
         # Löschen -> 409
         o = self.node(szenario="bilder", mandant_name="HILO e. V.", ops=[{"op": "loeschen", "bild_id": bild_id}])
@@ -704,10 +704,10 @@ class TestBilder(MN):
         """PUT /mandanten sendet logo_bild_id als number (parseInt) oder null (betreiber.js:768)."""
         m = self.mandant("hilo", "HILO e. V.")
         # Bild direkt in DB einfügen
-        with db.verbindung() as c:
-            c.execute("INSERT INTO bild (mandant_id, token, endung, content_type, breite, hoehe, groesse, sha256, alt, erstellt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))",
+        with db.verbindung() as conn:
+            cur = conn.execute("INSERT INTO bild (mandant_id, token, endung, content_type, breite, hoehe, groesse, sha256, alt, erstellt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))",
                      (m["id"], "test456", "png", "image/png", 80, 80, 800, "b"*64, "Test"))
-            bild_id = c.lastrowid
+            bild_id = cur.lastrowid
         # Zum Mandanten-Tab wechseln und logo_bild_id setzen
         o = self.node(szenario="bilder", mandant_name="HILO e. V.", ops=[], check_mandant=True, mandant_speichern={"logo_bild_id": str(bild_id)})
         self.assertIsNotNone(o.get("mandant"), "mandant-Daten müssen vorhanden sein")
