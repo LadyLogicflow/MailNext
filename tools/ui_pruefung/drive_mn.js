@@ -296,16 +296,19 @@ async function main() {
       }
       out.schritte.push({op, zustand: sicht(vor)});
     }
+    let mandantSicht;
     if (arg.mandant_speichern || arg.check_mandant) {
-      await klick(arg.mandant_name);
+      await klick('Einstellungen', doc.getElementById('main'));          // Tab 'details' (der Mandant ist durch den gemeinsamen Vorspann schon geöffnet)
       await sleep(600);
-      out.mandant = {
+      mandantSicht = () => ({
         logo_optionen: doc.getElementById('edit-logo_bild_id') ? [...doc.getElementById('edit-logo_bild_id').options].map(o => ({value: o.value, text: o.textContent})) : null,
         logo_wert: doc.getElementById('edit-logo_bild_id') ? doc.getElementById('edit-logo_bild_id').value : null,
         balken_primaer_checked: doc.getElementById('edit-balken_primaer') ? doc.getElementById('edit-balken_primaer').checked : null,
         balken_farbe_sichtbar: doc.getElementById('balken-farbe-wrapper') ? doc.getElementById('balken-farbe-wrapper').style.display !== 'none' : null,
         balken_farbe_wert: doc.getElementById('edit-balken_farbe') ? doc.getElementById('edit-balken_farbe').value : null,
-      };
+      });
+      out.mandant_vorher = mandantSicht();
+      out.mandant = out.mandant_vorher;
     }
     if (arg.mandant_speichern) {
       if (arg.mandant_speichern.logo_bild_id !== undefined) doc.getElementById('edit-logo_bild_id').value = arg.mandant_speichern.logo_bild_id || '';
@@ -315,6 +318,7 @@ async function main() {
         cb.dispatchEvent(new win.Event('change', {bubbles: true}));
       }
       if (arg.mandant_speichern.balken_farbe !== undefined) doc.getElementById('edit-balken_farbe').value = arg.mandant_speichern.balken_farbe;
+      if (arg.check_mandant) out.mandant = mandantSicht();          // Stand NACH dem Setzen der Felder (vor dem Speichern); der Stand davor steht in mandant_vorher
       const vor = requests.length;
       doc.getElementById('details-form').dispatchEvent(new win.Event('submit', {bubbles: true, cancelable: true}));
       await sleep(1500);

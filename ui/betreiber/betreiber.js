@@ -3063,6 +3063,8 @@ async function loadBilderListe(m, container) {
 
         data.forEach(bild => {
             const item = document.createElement('div');
+            item.className = 'bild-item';
+            item.dataset.bildId = String(bild.id);
             item.style.border = '1px solid var(--color-border)';
             item.style.borderRadius = '6px';
             item.style.padding = '0.75rem';
