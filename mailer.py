@@ -66,24 +66,17 @@ def html_rahmen(mandant: dict, titel: str, inhalt_html: str) -> str:
     """E-Mail-HTML im Design des Mandanten (nur Inline-Stil, wie Mailprogramme es brauchen)."""
     d = mandant["design"]
     schrift = mandanten.SCHRIFTEN[d["schrift"]]
-    logo_adresse = d["logo_url"]
-    if d.get("logo_bild_id"):                                        # hochgeladenes Logo hat Vorrang vor der externen Adresse
-        import bilder
-        b = bilder.oeffentliche_adresse(d["logo_bild_id"])
-        if b:
-            logo_adresse = "%s/%s/bild/%s.%s" % (_basis(mandant), b[0], b[1], b[2])
-    logo = ('<img src="%s" alt="%s" style="max-height:48px;max-width:240px;display:block">'
-            % (html.escape(logo_adresse, quote=True), html.escape(mandant["name"], quote=True))) if logo_adresse else \
-        '<span style="font-size:20px;font-weight:bold;color:#ffffff">%s</span>' % html.escape(mandant["name"])
+    import layout                                                    # gemeinsamer Kopf mit den Layout-Mails (catrin #19144)
+    kopf = layout.kopf_html(mandant)
     return ('<!doctype html><html lang="de"><head><meta charset="utf-8"><title>%s</title></head>'
             '<body style="margin:0;background:%s;font-family:%s;color:%s">'
             '<table role="presentation" width="100%%" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding:24px 12px">'
             '<table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%%;background:#ffffff;border-radius:8px;overflow:hidden">'
-            '<tr><td style="background:%s;padding:16px 24px">%s</td></tr>'
+            '%s'
             '<tr><td style="padding:24px;font-size:16px;line-height:1.5">%s</td></tr>'
             '<tr><td style="padding:16px 24px;border-top:1px solid #e5e7eb;font-size:12px;color:#6b7280;line-height:1.5">%s</td></tr>'
             '</table></td></tr></table></body></html>'
-            % (html.escape(titel), d["farbe_hintergrund"], schrift, d["farbe_text"], d["farbe_primaer"], logo, inhalt_html, _fusszeile_html(mandant)))
+            % (html.escape(titel), d["farbe_hintergrund"], schrift, d["farbe_text"], kopf, inhalt_html, _fusszeile_html(mandant)))
 
 
 def bestaetigungsmail(mandant: dict, token: str) -> tuple[str, str, str]:

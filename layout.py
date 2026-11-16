@@ -116,6 +116,43 @@ def _kontrast(farbe: str) -> str:
     return "#111111" if helligkeit > 150 else "#ffffff"
 
 
+def logo_adresse(mandant: dict) -> str | None:
+    """Öffentliche Adresse des Logos (hochgeladenes Bild hat Vorrang vor der externen Adresse) oder ``None``."""
+    d = mandant["design"]
+    adresse = d["logo_url"]
+    if d.get("logo_bild_id"):
+        b = bilder.oeffentliche_adresse(d["logo_bild_id"])
+        if b:
+            adresse = "%s/%s/bild/%s.%s" % (mailer._basis(mandant), b[0], b[1], b[2])
+    return adresse or None
+
+
+def kopf_html(mandant: dict, balken_text: str | None = None, balken_url: str | None = None) -> str:
+    """Kopf aller MailNext-Mails (catrin #19144): Zeile 1 das Logo, zentriert auf dem weißen Kartengrund (kein Hintergrund um das Logo), Zeile 2 der Balken
+    in Balken- bzw. Primärfarbe UNTER dem Logo. Ohne Logo steht nur der Balken; fehlt dann auch der Balkentext, trägt er den Namen des Mandanten, damit der
+    Kopf nicht ganz fehlt. Ohne Logo und mit Balkentext gibt es nur den Balken, mit Logo aber ohne Balkentext nur das Logo."""
+    d = mandant["design"]
+    balken_farbe = d.get("balken_farbe") or d["farbe_primaer"]
+    logo = logo_adresse(mandant)
+    zeilen = ""
+    if logo:
+        zeilen += ('<tr><td align="center" class="kopf-logo-zeile" style="padding:20px 24px 14px;text-align:center">'
+                   '<img src="%s" alt="%s" class="kopf-logo" style="display:inline-block;max-height:48px;max-width:240px;border:0"></td></tr>'
+                   % (html.escape(logo, quote=True), html.escape(mandant["name"], quote=True)))
+    text = balken_text
+    klasse = "balken"
+    if not text and not logo:                                    # Ersatz-Kopf (Name des Mandanten), kein Balken im Sinne des Entwurfs
+        text, klasse = mandant["name"], "kopf-name"
+    if text:
+        farbe_text = _kontrast(balken_farbe)
+        inhalt = html.escape(text)
+        if balken_url:
+            inhalt = '<a href="%s" style="color:%s;text-decoration:none;display:block">%s</a>' % (html.escape(balken_url, quote=True), farbe_text, inhalt)
+        zeilen += ('<tr><td bgcolor="%s" align="center" class="%s" style="background:%s;color:%s;padding:14px 24px;font-size:17px;font-weight:bold;'
+                   'line-height:1.3;text-align:center">%s</td></tr>' % (balken_farbe, klasse, balken_farbe, farbe_text, inhalt))
+    return zeilen
+
+
 def _bild_html(mandant: dict, bild: dict) -> str:
     adresse = bilder.oeffentliche_adresse(bild["bild_id"])
     if not adresse:
@@ -138,31 +175,13 @@ def html_rendern(mandant: dict, betreff: str, blocks: dict, einstellungen_url: s
     """Vollständiges Mail-HTML des Layout-Newsletters. ``blocks`` müssen aus ``pruefen`` stammen (bereinigt)."""
     d = mandant["design"]
     primaer = d["farbe_primaer"]
-    balken_farbe = d.get("balken_farbe") or primaer
     schrift = mailer.mandanten.SCHRIFTEN[d["schrift"]]
-    logo_adresse = d["logo_url"]
-    if d.get("logo_bild_id"):
-        b = bilder.oeffentliche_adresse(d["logo_bild_id"])
-        if b:
-            logo_adresse = "%s/%s/bild/%s.%s" % (mailer._basis(mandant), b[0], b[1], b[2])
-    if logo_adresse:
-        logo = ('<img src="%s" alt="%s" style="max-height:48px;max-width:240px;display:block;border:0">'
-                % (html.escape(logo_adresse, quote=True), html.escape(mandant["name"], quote=True)))
-    else:
-        logo = '<span style="font-size:20px;font-weight:bold;color:%s">%s</span>' % (_kontrast(primaer), html.escape(mandant["name"]))
     oben = ""
     if ansicht_url:
         oben = ('<tr><td align="center" style="padding:0 0 10px;font-size:12px;color:#6b7280"><a href="%s" style="color:#6b7280;text-decoration:underline">'
                 'Im Browser ansehen</a></td></tr>' % html.escape(ansicht_url, quote=True))
-    balken = ""
     bal = blocks.get("balken") or {}
-    if bal.get("text"):
-        farbe_text = _kontrast(balken_farbe)
-        inhalt = html.escape(bal["text"])
-        if bal.get("url"):
-            inhalt = '<a href="%s" style="color:%s;text-decoration:none;display:block">%s</a>' % (html.escape(bal["url"], quote=True), farbe_text, inhalt)
-        balken = ('<tr><td bgcolor="%s" align="center" class="balken" style="background:%s;color:%s;padding:14px 24px;font-size:17px;font-weight:bold;'
-                  'line-height:1.3">%s</td></tr>' % (balken_farbe, balken_farbe, farbe_text, inhalt))
+    kopf = kopf_html(mandant, bal.get("text"), bal.get("url"))
     text_html = textformat.rendern(blocks["text_html"], primaer, primaer)
     bild_zeilen = "".join(_bild_html(mandant, b) for b in blocks.get("bilder") or [])
     if bild_zeilen:
@@ -191,7 +210,7 @@ def html_rendern(mandant: dict, betreff: str, blocks: dict, einstellungen_url: s
             '<table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;width:100%%">%s'
             '<tr><td style="padding:0"><table role="presentation" width="100%%" cellpadding="0" cellspacing="0" border="0" class="karte" '
             'style="background:#ffffff;border-radius:8px;overflow:hidden">'
-            '<tr><td bgcolor="%s" style="background:%s;padding:16px 24px">%s</td></tr>%s%s'
+            '%s%s'
             '<tr><td style="padding:16px 24px;border-top:1px solid #e5e7eb;font-size:12px;color:#6b7280;line-height:1.5">%s</td></tr>'
             '</table></td></tr></table></td></tr></table></body></html>'
-            % (html.escape(betreff), d["farbe_hintergrund"], schrift, d["farbe_text"], d["farbe_hintergrund"], oben, primaer, primaer, logo, balken, inhalt_zeile, fuss))
+            % (html.escape(betreff), d["farbe_hintergrund"], schrift, d["farbe_text"], d["farbe_hintergrund"], oben, kopf, inhalt_zeile, fuss))
