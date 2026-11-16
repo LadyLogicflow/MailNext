@@ -682,7 +682,7 @@ class TestBilder(MN):
 
     def test_groesse_ueber_5mb_client_seitig_blockiert(self):
         """Datei >5 MB: change-Handler zeigt Toast, leert Input (betreiber.js:2953-2958)."""
-        self.mandant("HILO e. V.")
+        self.mandant("hilo", "HILO e. V.")
         o = self.node(szenario="bilder", mandant_name="HILO e. V.", ops=[{"op": "tippen_alt", "wert": "X"}, {"op": "datei_waehlen", "name": "huge.png", "size": 6*1024*1024}])
         self.assertIn("5 MB", o["schritte"][1]["zustand"]["toast"], "Größe >5MB muss Toast 'zu groß (maximal 5 MB)' zeigen")
 
