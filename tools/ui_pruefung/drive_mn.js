@@ -64,8 +64,8 @@ async function main() {
   }
   if (arg.szenario === 'abonnenten') {
     await klick('Abonnenten');
-    out.kopf = [...doc.querySelectorAll('th')].map(t => t.textContent);
-    out.zeilen = [...doc.querySelectorAll('tbody tr')].map(tr => [...tr.querySelectorAll('td')].map(td => td.textContent));
+    out.kopf = [...doc.querySelectorAll('th:not(.abo-extra)')].map(t => t.textContent);
+    out.zeilen = [...doc.querySelectorAll('tbody tr:not(.abo-tags-zeile)')].map(tr => [...tr.querySelectorAll('td:not(.abo-extra)')].map(td => td.textContent));
   }
   if (arg.szenario === 'newsletter') {
     await klick('Newsletter');
@@ -642,6 +642,68 @@ async function main() {
       }
       const neu = requests.slice(vor);
       out.schritte.push({op, requests: neu.map(r => `${r.m} ${r.p} ${r.s}`), bodies: neu.filter(r => r.body).map(r => ({m: r.m, p: r.p, s: r.s, body: r.body})), zustand: sicht()});
+    }
+  }
+  if (arg.szenario === 'tagsaendern') {
+    await klick('Abonnenten');
+    await sleep(900);
+    const zeilenEls = () => [...doc.querySelectorAll('#main tbody tr:not(.abo-tags-zeile)')];
+    const zeileVon = (email) => zeilenEls().find(tr => tr.children[1] && tr.children[1].textContent === email);
+    const sicht = (vor) => {
+      const alle = doc.getElementById('abo-alle');
+      const fehler = doc.getElementById('tags-fehler');
+      const panel = doc.querySelector('.abo-tags-zeile');
+      const panelZeile = panel ? panel.previousElementSibling : null;
+      return {
+        zeilen: zeilenEls().map(tr => {
+          const box = tr.querySelector('.abo-zeile-auswahl');
+          const b = tr.querySelector('.abo-tags-bearbeiten');
+          return {email: tr.children[1].textContent, status: tr.children[2].textContent, tags: tr.children[5].textContent, box: box ? {an: box.checked, gesperrt: box.disabled} : null, bearbeiten_gesperrt: b ? b.disabled : null};
+        }),
+        alle: alle ? {an: alle.checked, teils: alle.indeterminate, gesperrt: alle.disabled} : null,
+        zaehler: doc.getElementById('abo-auswahl-zaehler') ? doc.getElementById('abo-auswahl-zaehler').textContent : null,
+        eingabe: doc.getElementById('tags-eingabe') ? doc.getElementById('tags-eingabe').value : null,
+        knoepfe: {hinzufuegen_gesperrt: doc.getElementById('tags-hinzufuegen') ? doc.getElementById('tags-hinzufuegen').disabled : null, entfernen_gesperrt: doc.getElementById('tags-entfernen') ? doc.getElementById('tags-entfernen').disabled : null},
+        fehler: fehler && !fehler.classList.contains('hidden') ? fehler.textContent : null,
+        markiert: doc.getElementById('tags-eingabe') ? doc.getElementById('tags-eingabe').getAttribute('aria-invalid') : null,
+        vorschlaege: [...doc.querySelectorAll('#tags-vorschlaege option')].map(o => o.value),
+        panel: panel ? {
+          fuer: panelZeile.children[1].textContent,
+          chips: [...panel.querySelectorAll('.abo-tag-name')].map(c => c.textContent),
+          fehler: (panel.querySelector('.abo-tags-fehler') && !panel.querySelector('.abo-tags-fehler').classList.contains('hidden')) ? panel.querySelector('.abo-tags-fehler').textContent : null,
+          hinzufuegen_gesperrt: panel.querySelector('.abo-tag-hinzufuegen').disabled,
+        } : null,
+        toast: toastText(),
+        requests: requests.slice(vor).map(r => ({m: r.m, p: r.p.replace('/api/v1/betreiber', ''), s: r.s, body: r.body === undefined ? null : r.body})),
+      };
+    };
+    out.start = sicht(0);
+    out.schritte = [];
+    for (const op of arg.ops || []) {
+      const vor = requests.length;
+      if (op.op === 'waehle') {
+        for (const email of op.emails) {
+          const box = zeileVon(email).querySelector('.abo-zeile-auswahl');
+          box.checked = !box.disabled ? (op.an !== false) : box.checked;
+          box.dispatchEvent(new win.Event('change', {bubbles: true}));
+        }
+      }
+      if (op.op === 'erzwinge') {                       // gesperrte Zeile trotzdem anklicken (Prüfung, dass sie nicht zählt)
+        const box = zeileVon(op.email).querySelector('.abo-zeile-auswahl');
+        box.click();
+      }
+      if (op.op === 'alle') { const a = doc.getElementById('abo-alle'); a.checked = op.an !== false; a.dispatchEvent(new win.Event('change', {bubbles: true})); }
+      if (op.op === 'tag') { const e = doc.getElementById('tags-eingabe'); e.value = op.wert; e.dispatchEvent(new win.Event('input', {bubbles: true})); }
+      if (op.op === 'hinzufuegen') { const b = doc.getElementById('tags-hinzufuegen'); if (op.erzwingen) b.disabled = false; b.click(); await sleep(op.warte || 1100); }
+      if (op.op === 'entfernen') { const b = doc.getElementById('tags-entfernen'); if (op.erzwingen) b.disabled = false; b.click(); await sleep(op.warte || 1100); }
+      if (op.op === 'bearbeiten') { zeileVon(op.email).querySelector('.abo-tags-bearbeiten').click(); await sleep(300); }
+      if (op.op === 'chip_entfernen') {
+        const chip = [...doc.querySelectorAll('.abo-tags-zeile .abo-tag-chip')].find(c => c.querySelector('.abo-tag-name').textContent === op.tag);
+        chip.querySelector('.abo-tag-entfernen').click(); await sleep(1100);
+      }
+      if (op.op === 'zeile_tag') { const e = doc.querySelector('.abo-tags-zeile .abo-tag-eingabe'); e.value = op.wert; e.dispatchEvent(new win.Event('input', {bubbles: true})); }
+      if (op.op === 'zeile_hinzufuegen') { const b = doc.querySelector('.abo-tags-zeile .abo-tag-hinzufuegen'); if (op.erzwingen) b.disabled = false; b.click(); await sleep(1100); }
+      out.schritte.push({op, zustand: sicht(vor)});
     }
   }
   out.toast = toastText();

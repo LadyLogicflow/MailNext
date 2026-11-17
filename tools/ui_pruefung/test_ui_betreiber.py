@@ -1354,56 +1354,13 @@ class TestVersandRate(MN):
 
 
 class TestTagAuswahl(MN):
-    """Empfängerauswahl nach Tags (catrin #19209/#19211): vier Modi oder, und, ausser, ohne_tags. Backend v0.7.0 (ausser, ohne_tags) liegt noch nicht auf main:
-    solange newsletter._segment_pruefen die neuen Modi nicht kennt, ersetzt backend_v070() die beiden Funktionen durch eine Umsetzung der Spezifikation von Sorty."""
+    """Empfängerauswahl nach Tags (catrin #19209/#19211): vier Modi oder, und, ausser, ohne_tags gegen das echte Backend (ab v0.7.x)."""
 
     def vorbereiten(self):
         m = self.mandant("hilo", "HILO e. V.")
         text = mc([["a@example.org", "", "", "Spender", ""], ["b@example.org", "", "", "Spender,Verein A", ""], ["c@example.org", "", "", "Verein A", ""], ["d@example.org", "", "", "", ""]])
         self.importiere(m, text, rolle="verein", interessen=["sortnext"])
         return m
-
-    def backend_v070(self):
-        import contextlib, inspect, newsletter
-        if "ausser" in inspect.getsource(newsletter._segment_pruefen):
-            return contextlib.nullcontext()
-        orig_pruefen, orig_ermitteln = newsletter._segment_pruefen, newsletter._empfaenger_ermitteln
-
-        def pruefen(mandant, segment):
-            modus = (segment or {}).get("tags_modus") if isinstance(segment, dict) else None
-            if modus not in ("ausser", "ohne_tags"):
-                return orig_pruefen(mandant, segment)
-            if modus == "ohne_tags" and "tags" in segment:
-                raise newsletter.Fehler("segment_ungueltig", "tags_modus ohne_tags darf nicht zusammen mit tags gesendet werden", 400)
-            tags = segment.get("tags")
-            if modus == "ausser" and (not isinstance(tags, list) or not tags or len(tags) > 20):
-                raise newsletter.Fehler("segment_ungueltig", "tags_modus ausser braucht 1 bis 20 tags", 400)
-            ergebnis = orig_pruefen(mandant, {k: v for k, v in segment.items() if k not in ("tags", "tags_modus")})
-            if modus == "ausser":
-                import abonnenten
-                vorhanden = {e["tag"].lower(): e["tag"] for e in abonnenten.tags_liste(mandant["id"])}
-                if any(not isinstance(t, str) or t.strip().lower() not in vorhanden for t in tags):
-                    raise newsletter.Fehler("segment_ungueltig", "tags: unbekannter Tag", 400)
-                ergebnis["tags"] = sorted({vorhanden[t.strip().lower()] for t in tags})
-            ergebnis["tags_modus"] = modus
-            return ergebnis
-
-        def ermitteln(mandant, z):
-            seg = json.loads(z["segment"]) if z["ziel"] != "testliste" else {}
-            modus = seg.get("tags_modus")
-            if modus not in ("ausser", "ohne_tags"):
-                return orig_ermitteln(mandant, z)
-            basis = {k: v for k, v in seg.items() if k not in ("tags", "tags_modus")}
-            gesperrt = {t.lower() for t in seg.get("tags", [])}
-            alle = orig_ermitteln(mandant, {"ziel": z["ziel"], "segment": json.dumps(basis)})
-            with db.verbindung() as c:
-                hat = {r["id"]: {t.lower() for t in json.loads(r["tags"] or "[]")} for r in c.execute("SELECT id, tags FROM abonnent WHERE mandant_id=?", (mandant["id"],))}
-            return [e for e in alle if (not hat[e[1]] if modus == "ohne_tags" else not (gesperrt & hat[e[1]]))]
-
-        stack = contextlib.ExitStack()
-        stack.enter_context(mock.patch.object(newsletter, "_segment_pruefen", pruefen))
-        stack.enter_context(mock.patch.object(newsletter, "_empfaenger_ermitteln", ermitteln))
-        return stack
 
     def ops(self, ops):
         o = self.node(szenario="tagauswahl", mandant_name="HILO e. V.", ops=ops)
@@ -1438,8 +1395,7 @@ class TestTagAuswahl(MN):
 
     def test_ausser_sendet_tags_zaehlt_speichert_und_zeigt_den_modus_wieder(self):
         self.vorbereiten()
-        with self.backend_v070():
-            o = self.ops([{"op": "neu"}, {"op": "fuellen", "betreff": "Ohne Spender", "text": "Hallo"}, {"op": "modus", "wert": "ausser"}, {"op": "tags", "liste": ["Spender"]}, {"op": "speichern"}])
+        o = self.ops([{"op": "neu"}, {"op": "fuellen", "betreff": "Ohne Spender", "text": "Hallo"}, {"op": "modus", "wert": "ausser"}, {"op": "tags", "liste": ["Spender"]}, {"op": "speichern"}])
         tags = o["schritte"][3]
         self.assertEqual(self.vorschau_bodies(tags), [{"segment": {"tags": ["Spender"], "tags_modus": "ausser"}}])
         self.assertEqual(tags["zustand"]["anzahl"], "Empfänger: 2")                                   # c und d: bestätigte ohne Spender
@@ -1453,8 +1409,7 @@ class TestTagAuswahl(MN):
 
     def test_ausser_ohne_tag_ist_gesperrt_und_sendet_nichts(self):
         self.vorbereiten()
-        with self.backend_v070():
-            o = self.ops([{"op": "neu"}, {"op": "fuellen", "betreff": "B", "text": "T"}, {"op": "modus", "wert": "ausser"}, {"op": "speichern"}, {"op": "tags", "liste": ["Verein A"]}])
+        o = self.ops([{"op": "neu"}, {"op": "fuellen", "betreff": "B", "text": "T"}, {"op": "modus", "wert": "ausser"}, {"op": "speichern"}, {"op": "tags", "liste": ["Verein A"]}])
         leer, erzwungen, mit_tag = o["schritte"][2], o["schritte"][3], o["schritte"][4]
         self.assertTrue(leer["zustand"]["speichern_gesperrt"])
         self.assertIn("mindestens einen Tag", leer["zustand"]["segment_fehler"])                     # Text am Feld
@@ -1468,9 +1423,8 @@ class TestTagAuswahl(MN):
 
     def test_ohne_tags_blendet_die_liste_aus_und_sendet_nie_tags(self):
         self.vorbereiten()
-        with self.backend_v070():
-            o = self.ops([{"op": "neu"}, {"op": "fuellen", "betreff": "Nur ohne Tag", "text": "Hallo"}, {"op": "tags", "liste": ["Spender"]}, {"op": "modus", "wert": "ohne_tags"},
-                          {"op": "speichern"}])
+        o = self.ops([{"op": "neu"}, {"op": "fuellen", "betreff": "Nur ohne Tag", "text": "Hallo"}, {"op": "tags", "liste": ["Spender"]}, {"op": "modus", "wert": "ohne_tags"},
+                      {"op": "speichern"}])
         gewaehlt, ohne, gespeichert = o["schritte"][2], o["schritte"][3], o["schritte"][4]
         self.assertTrue(gewaehlt["zustand"]["tags_gruppe_sichtbar"])
         self.assertFalse(ohne["zustand"]["tags_gruppe_sichtbar"])                                    # Liste weg
@@ -1504,3 +1458,169 @@ class TestTagAuswahl(MN):
         self.assertEqual(post["s"], 400)
         self.assertEqual(speichern["zustand"]["segment_fehler"], meldung)
         self.assertEqual(self.entwuerfe(), [])
+
+
+class TestTagsAendern(MN):
+    """Tags nachträglich vergeben und entfernen (catrin #19236) gegen das echte Backend (POST .../abonnenten/tags-aendern): Mehrfachauswahl, Einzelbearbeitung,
+    gesperrte Zeilen (nur bestätigte Adressen), Live-Prüfung des Tag-Textes, Fehler mit meldung am Feld."""
+
+    def vorbereiten(self):
+        m = self.mandant("hilo", "HILO e. V.")
+        text = mc([["a@example.org", "", "", "Spender", ""], ["b@example.org", "", "", "Spender,Verein A", ""], ["c@example.org", "", "", "Verein A", ""], ["d@example.org", "", "", "", ""]])
+        self.importiere(m, text, rolle="verein", interessen=["sortnext"])
+        with db.verbindung() as c:
+            c.execute("UPDATE abonnent SET status='unbestaetigt' WHERE email='c@example.org'")
+            c.execute("UPDATE abonnent SET status='unzustellbar' WHERE email='d@example.org'")
+        return m
+
+    def ids(self):
+        with db.verbindung() as c:
+            return {z["email"]: z["id"] for z in c.execute("SELECT id, email FROM abonnent WHERE email IS NOT NULL")}
+
+    def tags_in_db(self, email):
+        with db.verbindung() as c:
+            return json.loads(c.execute("SELECT tags FROM abonnent WHERE email=?", (email,)).fetchone()["tags"] or "[]")
+
+    def ops(self, ops):
+        o = self.node(szenario="tagsaendern", mandant_name="HILO e. V.", ops=ops)
+        self.assertTrue(o["ok"], o)
+        return o
+
+    def post(self, schritt):
+        return [r for r in schritt["zustand"]["requests"] if r["m"] == "POST" and r["p"].endswith("/abonnenten/tags-aendern")]
+
+    def test_liste_zeigt_auswahl_gesperrte_zeilen_und_vorschlaege(self):
+        self.vorbereiten()
+        o = self.ops([{"op": "erzwinge", "email": "c@example.org"}])
+        s = o["start"]
+        zeilen = {z["email"]: z for z in s["zeilen"]}
+        self.assertEqual([z["email"] for z in s["zeilen"]], ["a@example.org", "b@example.org", "c@example.org", "d@example.org"])
+        for email in ("a@example.org", "b@example.org"):
+            self.assertEqual(zeilen[email]["box"], {"an": False, "gesperrt": False})
+            self.assertFalse(zeilen[email]["bearbeiten_gesperrt"])
+        for email in ("c@example.org", "d@example.org"):                                       # unbestätigt und unzustellbar: gesperrt
+            self.assertTrue(zeilen[email]["box"]["gesperrt"], email)
+            self.assertTrue(zeilen[email]["bearbeiten_gesperrt"], email)
+        self.assertEqual(s["alle"], {"an": False, "teils": False, "gesperrt": False})
+        self.assertEqual(s["zaehler"], "0 ausgewählt")
+        self.assertEqual(s["knoepfe"], {"hinzufuegen_gesperrt": True, "entfernen_gesperrt": True})
+        self.assertEqual(sorted(s["vorschlaege"]), ["Spender", "Verein A"])                  # Vorschlagsliste aus GET .../abonnenten/tags
+        self.assertEqual(o["schritte"][0]["zustand"]["zaehler"], "0 ausgewählt")             # ein Klick auf die gesperrte Zeile zählt nicht
+
+    def test_mehrere_hinzufuegen_zahlen_im_toast_und_liste_neu(self):
+        self.vorbereiten()
+        ids = self.ids()
+        o = self.ops([{"op": "waehle", "emails": ["a@example.org", "b@example.org"]}, {"op": "tag", "wert": "Neu"}, {"op": "hinzufuegen"},
+                      {"op": "waehle", "emails": ["a@example.org", "b@example.org"]}, {"op": "tag", "wert": "neu"}, {"op": "hinzufuegen"}])
+        z = [x["zustand"] for x in o["schritte"]]
+        self.assertEqual(z[1]["zaehler"], "2 ausgewählt")
+        self.assertFalse(z[1]["knoepfe"]["hinzufuegen_gesperrt"])
+        post = self.post(o["schritte"][2])
+        self.assertEqual(len(post), 1)
+        self.assertEqual(post[0]["s"], 200)
+        self.assertEqual(sorted(post[0]["body"]["abonnent_ids"]), sorted([ids["a@example.org"], ids["b@example.org"]]))
+        self.assertEqual(set(post[0]["body"]), {"abonnent_ids", "hinzufuegen"})
+        self.assertEqual(post[0]["body"]["hinzufuegen"], ["Neu"])
+        self.assertEqual(z[2]["toast"], "Tag „Neu“ hinzugefügt: 2 geändert, 0 unverändert, 0 übersprungen")
+        self.assertEqual(self.tags_in_db("a@example.org"), ["Spender", "Neu"])
+        rows = {r["email"]: r for r in z[2]["zeilen"]}
+        self.assertEqual((rows["a@example.org"]["tags"], rows["b@example.org"]["tags"]), ("Spender, Neu", "Spender, Verein A, Neu"))       # Liste neu geladen
+        self.assertEqual(z[2]["zaehler"], "2 ausgewählt")                                      # die Auswahl bleibt für weitere Schritte, die Eingabe wird geleert
+        self.assertEqual(z[2]["eingabe"], "")
+        self.assertTrue(all(r["box"]["an"] for r in z[2]["zeilen"] if r["email"] in ("a@example.org", "b@example.org")))
+        self.assertIn("Neu", z[2]["vorschlaege"])                                                # Vorschläge aktualisiert
+        self.assertEqual(self.post(o["schritte"][5])[0]["body"]["hinzufuegen"], ["neu"])
+        self.assertEqual(z[5]["toast"], "Tag „neu“ hinzugefügt: 0 geändert, 2 unverändert, 0 übersprungen")     # Groß-/Kleinschreibung egal
+        self.assertEqual(self.tags_in_db("a@example.org"), ["Spender", "Neu"])                   # vorhandene Schreibweise bleibt
+
+    def test_alle_auswaehlen_waehlt_nur_bestaetigte(self):
+        self.vorbereiten()
+        ids = self.ids()
+        o = self.ops([{"op": "alle"}, {"op": "waehle", "emails": ["a@example.org"], "an": False}, {"op": "tag", "wert": "X"}, {"op": "hinzufuegen"}])
+        alle, teils = o["schritte"][0]["zustand"], o["schritte"][1]["zustand"]
+        self.assertEqual(alle["zaehler"], "2 ausgewählt")
+        self.assertEqual({z["email"]: z["box"]["an"] for z in alle["zeilen"]}, {"a@example.org": True, "b@example.org": True, "c@example.org": False, "d@example.org": False})
+        self.assertEqual(alle["alle"], {"an": True, "teils": False, "gesperrt": False})
+        self.assertEqual(teils["alle"], {"an": False, "teils": True, "gesperrt": False})        # teilweise gewählt
+        self.assertEqual(self.post(o["schritte"][3])[0]["body"]["abonnent_ids"], [ids["b@example.org"]])
+
+    def test_entfernen_und_gesperrte_adressen_bleiben_unberuehrt(self):
+        self.vorbereiten()
+        o = self.ops([{"op": "alle"}, {"op": "tag", "wert": "Spender"}, {"op": "entfernen"}])
+        s = o["schritte"][2]
+        post = self.post(s)[0]
+        self.assertEqual(set(post["body"]), {"abonnent_ids", "entfernen"})
+        self.assertEqual(post["body"]["entfernen"], ["Spender"])
+        self.assertEqual(s["zustand"]["toast"], "Tag „Spender“ entfernt: 2 geändert, 0 unverändert, 0 übersprungen")
+        self.assertEqual((self.tags_in_db("a@example.org"), self.tags_in_db("b@example.org")), ([], ["Verein A"]))
+        self.assertEqual(self.tags_in_db("c@example.org"), ["Verein A"])                         # unbestätigt: nie verändert
+
+    def test_tag_limit_wird_im_toast_ausgewiesen(self):
+        self.vorbereiten()
+        with db.verbindung() as c:
+            c.execute("UPDATE abonnent SET tags=? WHERE email='a@example.org'", (json.dumps(["T%d" % i for i in range(20)]),))
+        o = self.ops([{"op": "alle"}, {"op": "tag", "wert": "Einundzwanzig"}, {"op": "hinzufuegen"}])
+        self.assertEqual(o["schritte"][2]["zustand"]["toast"], "Tag „Einundzwanzig“ hinzugefügt: 1 geändert, 1 unverändert, 1 übersprungen (1 wegen Tag-Limit (höchstens 20 je Adresse))")
+        self.assertEqual(len(self.tags_in_db("a@example.org")), 20)
+        self.assertEqual(self.tags_in_db("b@example.org")[-1], "Einundzwanzig")
+
+    def test_tag_text_wird_live_geprueft_und_sperrt_die_knoepfe(self):
+        self.vorbereiten()
+        ungueltig = ["a,b", "a;b", "a|b", "x" * 41, "a\x07b"]
+        ops = [{"op": "waehle", "emails": ["a@example.org"]}]
+        for wert in ungueltig:
+            ops += [{"op": "tag", "wert": wert}, {"op": "hinzufuegen", "erzwingen": True, "warte": 300}]
+        ops += [{"op": "tag", "wert": ""}, {"op": "tag", "wert": "  gut  "}]
+        o = self.ops(ops)
+        for i, wert in enumerate(ungueltig):
+            tippen, klick = o["schritte"][1 + 2 * i]["zustand"], o["schritte"][2 + 2 * i]["zustand"]
+            self.assertTrue(tippen["knoepfe"]["hinzufuegen_gesperrt"] and tippen["knoepfe"]["entfernen_gesperrt"], repr(wert))
+            self.assertIn("40 Zeichen", tippen["fehler"], repr(wert))                              # Text am Feld
+            self.assertEqual(tippen["markiert"], "true", repr(wert))
+            self.assertEqual(self.post(o["schritte"][2 + 2 * i]), [], repr(wert))                    # auch erzwungenes Klicken sendet nichts
+        leer = o["schritte"][-2]["zustand"]
+        self.assertTrue(leer["knoepfe"]["hinzufuegen_gesperrt"])
+        self.assertIsNone(leer["fehler"])                                                          # leer: gesperrt, aber keine Fehlermeldung
+        gut = o["schritte"][-1]["zustand"]
+        self.assertFalse(gut["knoepfe"]["hinzufuegen_gesperrt"])
+        self.assertIsNone(gut["fehler"])
+        o = self.ops([{"op": "tag", "wert": "gut"}])                                              # ohne Auswahl bleibt es gesperrt
+        self.assertTrue(o["schritte"][0]["zustand"]["knoepfe"]["hinzufuegen_gesperrt"])
+        self.assertEqual(self.tags_in_db("a@example.org"), ["Spender"])
+
+    def test_serverfehler_mit_meldung_erscheint_am_feld(self):
+        self.vorbereiten()
+        fehler = abonnenten.FormFehler("tags_widerspruch", "entfernen")
+        with mock.patch.object(abonnenten, "tags_aendern", side_effect=fehler):
+            o = self.ops([{"op": "waehle", "emails": ["a@example.org"]}, {"op": "tag", "wert": "Neu"}, {"op": "hinzufuegen"}])
+        s = o["schritte"][2]
+        self.assertEqual([r["s"] for r in self.post(s)], [400])
+        self.assertEqual(s["zustand"]["fehler"], "Ein Tag steht bei hinzufuegen und bei entfernen.")      # meldung des Servers, 1:1 am Feld
+        self.assertEqual(s["zustand"]["markiert"], "true")
+        self.assertNotIn("hinzugefügt", s["zustand"]["toast"])
+        self.assertEqual(s["zustand"]["zaehler"], "1 ausgewählt")                                  # Auswahl und Eingabe bleiben zum Korrigieren
+        self.assertEqual(s["zustand"]["eingabe"], "Neu")
+        self.assertEqual(self.tags_in_db("a@example.org"), ["Spender"])
+
+    def test_einzeln_chips_entfernen_hinzufuegen_und_fehler(self):
+        self.vorbereiten()
+        ids = self.ids()
+        o = self.ops([{"op": "bearbeiten", "email": "b@example.org"}, {"op": "chip_entfernen", "tag": "Spender"}, {"op": "zeile_tag", "wert": "a,b"},
+                      {"op": "zeile_tag", "wert": "Neu"}, {"op": "zeile_hinzufuegen"}, {"op": "bearbeiten", "email": "c@example.org"}])
+        z = [x["zustand"] for x in o["schritte"]]
+        self.assertEqual((z[0]["panel"]["fuer"], z[0]["panel"]["chips"]), ("b@example.org", ["Spender", "Verein A"]))        # vorhandene Tags als Chips
+        self.assertTrue(z[0]["panel"]["hinzufuegen_gesperrt"])
+        entf = self.post(o["schritte"][1])[0]
+        self.assertEqual((entf["s"], entf["body"]), (200, {"abonnent_ids": [ids["b@example.org"]], "entfernen": ["Spender"]}))
+        self.assertEqual(z[1]["panel"]["chips"], ["Verein A"])                                  # Bereich bleibt offen, Chips aktualisiert
+        self.assertEqual(z[1]["toast"], "Tag „Spender“ entfernt: 1 geändert, 0 unverändert, 0 übersprungen")
+        self.assertIn("40 Zeichen", z[2]["panel"]["fehler"])                                    # Live-Prüfung im Feld der Zeile
+        self.assertTrue(z[2]["panel"]["hinzufuegen_gesperrt"])
+        self.assertFalse(z[3]["panel"]["hinzufuegen_gesperrt"])
+        self.assertIsNone(z[3]["panel"]["fehler"])
+        hinz = self.post(o["schritte"][4])[0]
+        self.assertEqual((hinz["s"], hinz["body"]), (200, {"abonnent_ids": [ids["b@example.org"]], "hinzufuegen": ["Neu"]}))
+        self.assertEqual(z[4]["panel"]["chips"], ["Verein A", "Neu"])
+        self.assertEqual(self.tags_in_db("b@example.org"), ["Verein A", "Neu"])
+        self.assertEqual(self.tags_in_db("a@example.org"), ["Spender"])                         # andere Adressen unberührt
+        self.assertEqual(z[5]["panel"]["fuer"], "b@example.org")                                # unbestätigte Zeile lässt sich nicht öffnen

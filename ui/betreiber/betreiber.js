@@ -2329,6 +2329,30 @@ async function renderNewsletterEditor(m, entwurfId) {
     }
 }
 
+// Tag-Text wie im Backend (import_csv.tag_pruefen): nicht leer, höchstens 40 Zeichen, keine Steuerzeichen und kein , ; |
+function abonnentTagPruefen(roh) {
+    const t = (roh || '').trim();
+    if (!t) return {tag: null, fehler: null};
+    if (t.length > 40 || /[\x00-\x1f\x7f,;|]/.test(t)) {
+        return {tag: null, fehler: 'Ein Tag darf höchstens 40 Zeichen haben und kein Komma, Semikolon, senkrechten Strich oder Steuerzeichen enthalten.'};
+    }
+    return {tag: t, fehler: null};
+}
+
+// Toast-Text mit Zahlen: geändert, unverändert, übersprungen (mit Gründen)
+function abonnentTagsErgebnis(erg, art, tag) {
+    const ueb = erg.uebersprungen || {};
+    const summe = Object.values(ueb).reduce((n, w) => n + w, 0);
+    let text = `Tag „${tag}“ ${art === 'hinzufuegen' ? 'hinzugefügt' : 'entfernt'}: ${erg.geaendert} geändert, ${erg.unveraendert} unverändert, ${summe} übersprungen`;
+    const gruende = [];
+    if (ueb.tag_limit) gruende.push(`${ueb.tag_limit} wegen Tag-Limit (höchstens 20 je Adresse)`);
+    if (ueb.unbestaetigt) gruende.push(`${ueb.unbestaetigt} unbestätigt`);
+    if (ueb.abgemeldet) gruende.push(`${ueb.abgemeldet} abgemeldet`);
+    if (ueb.unzustellbar) gruende.push(`${ueb.unzustellbar} unzustellbar`);
+    if (ueb.unbekannt) gruende.push(`${ueb.unbekannt} unbekannt`);
+    return gruende.length ? `${text} (${gruende.join(', ')})` : text;
+}
+
 async function renderAbonnenten(m) {
     const main = document.getElementById('main');
     const card = document.createElement('div');
@@ -2349,7 +2373,10 @@ async function renderAbonnenten(m) {
     main.appendChild(card);
 
     try {
-        const data = await apiCall(`/mandanten/${m.id}/abonnenten`);
+        const [data, tagsAntwort] = await Promise.all([
+            apiCall(`/mandanten/${m.id}/abonnenten`),
+            apiCall(`/mandanten/${m.id}/abonnenten/tags`).catch(() => null),
+        ]);
         loadingDiv.remove();
 
         // Kennzahlen
@@ -2386,64 +2413,333 @@ async function renderAbonnenten(m) {
         // Abonnent manuell hinzufügen
         await renderAbonnentHinzufuegen(m, card);
 
-        // Tabelle
-        const table = document.createElement('table');
+        // Tags nachträglich vergeben und entfernen (POST .../abonnenten/tags-aendern): Mehrfachauswahl oben, einzeln in der Zeile
+        let zeilen = data.abonnenten || [];
+        const auswahl = new Set();
+        let offeneZeile = null;
+        const TAGS_MAX_IDS = 2000;
+
+        const leiste = document.createElement('div');
+        leiste.id = 'tags-leiste';
+        leiste.style.margin = '0 0 1rem';
+        leiste.style.padding = '1rem';
+        leiste.style.background = '#f9fafb';
+        leiste.style.borderRadius = '6px';
+        const leisteTitel = document.createElement('strong');
+        leisteTitel.textContent = 'Tags für mehrere Adressen';
+        leiste.appendChild(leisteTitel);
+        const leisteZeile = document.createElement('div');
+        leisteZeile.style.display = 'flex';
+        leisteZeile.style.flexWrap = 'wrap';
+        leisteZeile.style.gap = '0.75rem';
+        leisteZeile.style.alignItems = 'center';
+        leisteZeile.style.marginTop = '0.5rem';
+        const alleLabel = document.createElement('label');
+        const alleBox = document.createElement('input');
+        alleBox.type = 'checkbox';
+        alleBox.id = 'abo-alle';
+        alleLabel.appendChild(alleBox);
+        alleLabel.appendChild(document.createTextNode(' Alle auswählen'));
+        leisteZeile.appendChild(alleLabel);
+        const zaehler = document.createElement('span');
+        zaehler.id = 'abo-auswahl-zaehler';
+        leisteZeile.appendChild(zaehler);
+        const tagEingabe = document.createElement('input');
+        tagEingabe.type = 'text';
+        tagEingabe.id = 'tags-eingabe';
+        tagEingabe.placeholder = 'Tag';
+        tagEingabe.setAttribute('list', 'tags-vorschlaege');
+        tagEingabe.autocomplete = 'off';
+        leisteZeile.appendChild(tagEingabe);
+        const vorschlaege = document.createElement('datalist');
+        vorschlaege.id = 'tags-vorschlaege';
+        leisteZeile.appendChild(vorschlaege);
+        const hinzuBtn = document.createElement('button');
+        hinzuBtn.type = 'button';
+        hinzuBtn.id = 'tags-hinzufuegen';
+        hinzuBtn.className = 'btn btn-primary';
+        hinzuBtn.textContent = 'Tag hinzufügen';
+        leisteZeile.appendChild(hinzuBtn);
+        const entfBtn = document.createElement('button');
+        entfBtn.type = 'button';
+        entfBtn.id = 'tags-entfernen';
+        entfBtn.className = 'btn btn-secondary';
+        entfBtn.textContent = 'Tag entfernen';
+        leisteZeile.appendChild(entfBtn);
+        leiste.appendChild(leisteZeile);
+        const leisteFehler = document.createElement('div');
+        leisteFehler.id = 'tags-fehler';
+        leisteFehler.className = 'field-error hidden';
+        leiste.appendChild(leisteFehler);
+        const leisteHinweis = document.createElement('small');
+        leisteHinweis.style.color = '#6b7280';
+        leisteHinweis.textContent = 'Nur bestätigte Adressen können Tags bekommen. Groß-/Kleinschreibung ist egal, höchstens 40 Zeichen, höchstens 20 Tags je Adresse.';
+        leiste.appendChild(leisteHinweis);
+        card.appendChild(leiste);
+
+        const zeigeLeistenFehler = (text) => {
+            leisteFehler.textContent = text || '';
+            leisteFehler.classList.toggle('hidden', !text);
+            if (text) tagEingabe.setAttribute('aria-invalid', 'true');
+            else tagEingabe.removeAttribute('aria-invalid');
+        };
+        const fuelleVorschlaege = (tags) => {
+            vorschlaege.textContent = '';
+            (tags || []).forEach(t => {
+                const o = document.createElement('option');
+                o.value = t.tag;
+                vorschlaege.appendChild(o);
+            });
+        };
+        fuelleVorschlaege(tagsAntwort ? tagsAntwort.tags : []);
+
+        const auswaehlbar = () => zeilen.filter(z => z.status === 'bestaetigt');
+        const aktualisiereLeiste = () => {
+            const moeglich = auswaehlbar();
+            const gewaehlt = moeglich.filter(z => auswahl.has(z.id)).length;
+            alleBox.disabled = moeglich.length === 0;
+            alleBox.checked = moeglich.length > 0 && gewaehlt === moeglich.length;
+            alleBox.indeterminate = gewaehlt > 0 && gewaehlt < moeglich.length;
+            zaehler.textContent = `${auswahl.size} ausgewählt`;
+            const pruefung = abonnentTagPruefen(tagEingabe.value);
+            let fehler = pruefung.fehler;
+            if (!fehler && auswahl.size > TAGS_MAX_IDS) fehler = `Höchstens ${TAGS_MAX_IDS} Adressen je Vorgang auswählen.`;
+            zeigeLeistenFehler(fehler);
+            const gesperrt = auswahl.size === 0 || !pruefung.tag || !!fehler;
+            hinzuBtn.disabled = gesperrt;
+            entfBtn.disabled = gesperrt;
+        };
+
+        const tabelle = document.createElement('table');
         const thead = document.createElement('thead');
         const headerRow = document.createElement('tr');
-        ['E-Mail', 'Status', 'Rolle', 'Interessen', 'Tags', 'Herkunft', 'Quelle', 'Angemeldet'].forEach(h => {
+        ['', 'E-Mail', 'Status', 'Rolle', 'Interessen', 'Tags', 'Herkunft', 'Quelle', 'Angemeldet', 'Aktion'].forEach((h, i, alle) => {
             const th = document.createElement('th');
             th.textContent = h;
+            if (i === 0 || i === alle.length - 1) th.className = 'abo-extra';
+            if (i === 0) th.setAttribute('aria-label', 'Auswahl');
             headerRow.appendChild(th);
         });
         thead.appendChild(headerRow);
-        table.appendChild(thead);
-
+        tabelle.appendChild(thead);
         const tbody = document.createElement('tbody');
-        (data.abonnenten || []).forEach(a => {
-            const row = document.createElement('tr');
+        tabelle.appendChild(tbody);
 
-            const emailCell = document.createElement('td');
-            emailCell.textContent = a.email || '(pseudonymisiert)';
-            row.appendChild(emailCell);
+        const neuLaden = async () => {
+            const [liste, tags] = await Promise.all([
+                apiCall(`/mandanten/${m.id}/abonnenten`),
+                apiCall(`/mandanten/${m.id}/abonnenten/tags`).catch(() => null),
+            ]);
+            zeilen = liste.abonnenten || [];
+            if (tags) fuelleVorschlaege(tags.tags);
+            const gueltig = new Set(zeilen.filter(z => z.status === 'bestaetigt').map(z => z.id));
+            Array.from(auswahl).forEach(id => { if (!gueltig.has(id)) auswahl.delete(id); });
+            if (!zeilen.some(z => z.id === offeneZeile)) offeneZeile = null;
+            zeichneZeilen();
+            aktualisiereLeiste();
+        };
+        // Ein Aufruf an die Schnittstelle; Antwort als Toast mit Zahlen, danach Liste und Vorschläge neu laden
+        const tagsAendern = async (ids, art, tag) => {
+            const erg = await apiCall(`/mandanten/${m.id}/abonnenten/tags-aendern`, {method: 'POST', body: JSON.stringify({abonnent_ids: ids, [art]: [tag]})});
+            showToast(abonnentTagsErgebnis(erg, art, tag), 'success');
+            await neuLaden();
+        };
 
-            const statusCell = document.createElement('td');
-            const badge = document.createElement('span');
-            badge.className = 'badge';
-            if (a.status === 'bestaetigt') badge.classList.add('badge-success');
-            else if (a.status === 'unzustellbar') badge.classList.add('badge-error');
-            else badge.classList.add('badge-warning');
-            badge.textContent = a.status === 'bestaetigt' ? 'Bestätigt' : a.status === 'unzustellbar' ? 'Unzustellbar' : 'Unbestätigt';
-            statusCell.appendChild(badge);
-            row.appendChild(statusCell);
+        const zeichneZeilen = () => {
+            tbody.textContent = '';
+            zeilen.forEach(a => {
+                const bestaetigt = a.status === 'bestaetigt';
+                const row = document.createElement('tr');
 
-            const rolleCell = document.createElement('td');
-            rolleCell.textContent = a.rolle || '-';
-            row.appendChild(rolleCell);
+                const auswahlCell = document.createElement('td');
+                auswahlCell.className = 'abo-extra';
+                const box = document.createElement('input');
+                box.type = 'checkbox';
+                box.className = 'abo-zeile-auswahl';
+                box.dataset.id = String(a.id);
+                box.disabled = !bestaetigt;
+                box.checked = bestaetigt && auswahl.has(a.id);
+                box.setAttribute('aria-label', 'Adresse auswählen');
+                if (!bestaetigt) box.title = 'Nur bestätigte Adressen können Tags bekommen';
+                box.addEventListener('change', () => {
+                    if (box.checked) auswahl.add(a.id);
+                    else auswahl.delete(a.id);
+                    aktualisiereLeiste();
+                });
+                auswahlCell.appendChild(box);
+                row.appendChild(auswahlCell);
 
-            const interessenCell = document.createElement('td');
-            interessenCell.textContent = (a.interessen || []).join(', ') || '-';
-            row.appendChild(interessenCell);
+                const emailCell = document.createElement('td');
+                emailCell.textContent = a.email || '(pseudonymisiert)';
+                row.appendChild(emailCell);
 
-            const tagsCell = document.createElement('td');
-            tagsCell.textContent = (a.tags || []).join(', ') || '-';
-            row.appendChild(tagsCell);
+                const statusCell = document.createElement('td');
+                const badge = document.createElement('span');
+                badge.className = 'badge';
+                if (a.status === 'bestaetigt') badge.classList.add('badge-success');
+                else if (a.status === 'unzustellbar') badge.classList.add('badge-error');
+                else badge.classList.add('badge-warning');
+                badge.textContent = a.status === 'bestaetigt' ? 'Bestätigt' : a.status === 'unzustellbar' ? 'Unzustellbar' : 'Unbestätigt';
+                statusCell.appendChild(badge);
+                row.appendChild(statusCell);
 
-            const herkunftCell = document.createElement('td');
-            herkunftCell.textContent = a.herkunft || '-';
-            row.appendChild(herkunftCell);
+                const rolleCell = document.createElement('td');
+                rolleCell.textContent = a.rolle || '-';
+                row.appendChild(rolleCell);
 
-            const quelleCell = document.createElement('td');
-            quelleCell.textContent = a.quelle || '-';
-            row.appendChild(quelleCell);
+                const interessenCell = document.createElement('td');
+                interessenCell.textContent = (a.interessen || []).join(', ') || '-';
+                row.appendChild(interessenCell);
 
-            const dateCell = document.createElement('td');
-            dateCell.textContent = a.einwilligung_am ? new Date(a.einwilligung_am).toLocaleDateString('de-DE') : '-';
-            row.appendChild(dateCell);
+                const tagsCell = document.createElement('td');
+                tagsCell.textContent = (a.tags || []).join(', ') || '-';
+                row.appendChild(tagsCell);
 
-            tbody.appendChild(row);
+                const herkunftCell = document.createElement('td');
+                herkunftCell.textContent = a.herkunft || '-';
+                row.appendChild(herkunftCell);
+
+                const quelleCell = document.createElement('td');
+                quelleCell.textContent = a.quelle || '-';
+                row.appendChild(quelleCell);
+
+                const dateCell = document.createElement('td');
+                dateCell.textContent = a.einwilligung_am ? new Date(a.einwilligung_am).toLocaleDateString('de-DE') : '-';
+                row.appendChild(dateCell);
+
+                const aktionCell = document.createElement('td');
+                aktionCell.className = 'abo-extra';
+                const bearbeiten = document.createElement('button');
+                bearbeiten.type = 'button';
+                bearbeiten.className = 'btn btn-secondary btn-small abo-tags-bearbeiten';
+                bearbeiten.textContent = 'Tags bearbeiten';
+                bearbeiten.disabled = !bestaetigt;
+                if (!bestaetigt) bearbeiten.title = 'Nur bestätigte Adressen können Tags bekommen';
+                bearbeiten.addEventListener('click', () => {
+                    offeneZeile = offeneZeile === a.id ? null : a.id;
+                    zeichneZeilen();
+                });
+                aktionCell.appendChild(bearbeiten);
+                row.appendChild(aktionCell);
+                tbody.appendChild(row);
+
+                if (offeneZeile === a.id && bestaetigt) tbody.appendChild(zeichneTagsZeile(a));
+            });
+        };
+
+        // Einzelbearbeitung: vorhandene Tags als entfernbare Chips, Feld zum Hinzufügen
+        const zeichneTagsZeile = (a) => {
+            const zeile = document.createElement('tr');
+            zeile.className = 'abo-tags-zeile';
+            const zelle = document.createElement('td');
+            zelle.colSpan = 10;
+            zelle.style.background = '#f9fafb';
+            const chips = document.createElement('div');
+            chips.className = 'abo-tags-chips';
+            chips.style.display = 'flex';
+            chips.style.flexWrap = 'wrap';
+            chips.style.gap = '0.5rem';
+            chips.style.marginBottom = '0.5rem';
+            const fehler = document.createElement('div');
+            fehler.className = 'field-error hidden abo-tags-fehler';
+            const zeigeFehler = (text) => { fehler.textContent = text || ''; fehler.classList.toggle('hidden', !text); };
+            if ((a.tags || []).length === 0) {
+                const leer = document.createElement('small');
+                leer.textContent = 'Noch keine Tags.';
+                chips.appendChild(leer);
+            }
+            (a.tags || []).forEach(tag => {
+                const chip = document.createElement('span');
+                chip.className = 'abo-tag-chip';
+                chip.style.display = 'inline-flex';
+                chip.style.alignItems = 'center';
+                chip.style.gap = '0.25rem';
+                chip.style.padding = '0.125rem 0.5rem';
+                chip.style.border = '1px solid var(--color-border)';
+                chip.style.borderRadius = '999px';
+                chip.style.background = '#fff';
+                const name = document.createElement('span');
+                name.className = 'abo-tag-name';
+                name.textContent = tag;
+                chip.appendChild(name);
+                const weg = document.createElement('button');
+                weg.type = 'button';
+                weg.className = 'abo-tag-entfernen';
+                weg.textContent = '×';
+                weg.setAttribute('aria-label', `Tag ${tag} entfernen`);
+                weg.addEventListener('click', async () => {
+                    zeigeFehler('');
+                    try {
+                        await tagsAendern([a.id], 'entfernen', tag);
+                    } catch (err) {
+                        zeigeFehler(err.message);
+                    }
+                });
+                chip.appendChild(weg);
+                chips.appendChild(chip);
+            });
+            zelle.appendChild(chips);
+            const eingabeZeile = document.createElement('div');
+            eingabeZeile.style.display = 'flex';
+            eingabeZeile.style.gap = '0.5rem';
+            const eingabe = document.createElement('input');
+            eingabe.type = 'text';
+            eingabe.className = 'abo-tag-eingabe';
+            eingabe.placeholder = 'Tag hinzufügen';
+            eingabe.setAttribute('list', 'tags-vorschlaege');
+            eingabe.autocomplete = 'off';
+            const hinzu = document.createElement('button');
+            hinzu.type = 'button';
+            hinzu.className = 'btn btn-primary btn-small abo-tag-hinzufuegen';
+            hinzu.textContent = 'Hinzufügen';
+            hinzu.disabled = true;
+            const pruefe = () => {
+                const p = abonnentTagPruefen(eingabe.value);
+                zeigeFehler(p.fehler);
+                hinzu.disabled = !p.tag || !!p.fehler;
+            };
+            eingabe.addEventListener('input', pruefe);
+            hinzu.addEventListener('click', async () => {
+                const p = abonnentTagPruefen(eingabe.value);
+                if (!p.tag) return;
+                try {
+                    await tagsAendern([a.id], 'hinzufuegen', p.tag);
+                } catch (err) {
+                    zeigeFehler(err.message);
+                }
+            });
+            eingabeZeile.appendChild(eingabe);
+            eingabeZeile.appendChild(hinzu);
+            zelle.appendChild(eingabeZeile);
+            zelle.appendChild(fehler);
+            zeile.appendChild(zelle);
+            return zeile;
+        };
+
+        alleBox.addEventListener('change', () => {
+            auswaehlbar().forEach(z => { if (alleBox.checked) auswahl.add(z.id); else auswahl.delete(z.id); });
+            zeichneZeilen();
+            aktualisiereLeiste();
         });
-        table.appendChild(tbody);
-        card.appendChild(table);
+        tagEingabe.addEventListener('input', aktualisiereLeiste);
+        const massenaenderung = (art) => async () => {
+            const p = abonnentTagPruefen(tagEingabe.value);
+            if (!p.tag || auswahl.size === 0) return;
+            zeigeLeistenFehler('');
+            try {
+                await tagsAendern(Array.from(auswahl), art, p.tag);
+                tagEingabe.value = '';
+                aktualisiereLeiste();
+            } catch (err) {
+                zeigeLeistenFehler(err.message);
+            }
+        };
+        hinzuBtn.addEventListener('click', massenaenderung('hinzufuegen'));
+        entfBtn.addEventListener('click', massenaenderung('entfernen'));
+
+        zeichneZeilen();
+        aktualisiereLeiste();
+        card.appendChild(tabelle);
 
     } catch (err) {
         loadingDiv.textContent = 'Fehler: ' + err.message;
