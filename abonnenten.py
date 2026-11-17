@@ -235,7 +235,8 @@ def _tags_aendern_pruefen(werte, feld) -> list:
 def tags_aendern(mandant: dict, abonnent_ids, hinzufuegen, entfernen) -> dict:
     """Tags vieler bestätigter Abonnentinnen dieses Mandanten gemeinsam ändern: ``hinzufuegen`` (höchstens MAX_TAGS_JE_ADRESSE je Adresse, Groß-/Kleinschreibung egal, vorhandene
     Schreibweise bleibt) und ``entfernen``. Abgemeldete, unzustellbare, unbestätigte und fremde/unbekannte Nummern werden übersprungen und gezählt, nie verändert. Alles in einer
-    Transaktion; Antwort nur Zahlen und die neue Tag-Liste, nie Adressen. Freigegebene Versandlisten bleiben festgeschrieben (eigene Tabelle), offene Entwürfe zählen neu."""
+    Transaktion; Antwort nur Zahlen und die neue Tag-Liste, nie Adressen. Jede Nummer zählt GENAU EINMAL: geaendert + unveraendert + Summe(uebersprungen) = Zahl der verschiedenen
+    Nummern; ``tag_limit_teilweise`` ist nur ein Hinweis (davon in geaendert: ein neuer Tag passte wegen der 20er-Grenze nicht mehr), kein Zähler der Summe. Freigegebene Versandlisten bleiben festgeschrieben (eigene Tabelle), offene Entwürfe zählen neu."""
     if (not isinstance(abonnent_ids, list) or not 1 <= len(abonnent_ids) <= MAX_IDS_TAGS_AENDERN
             or any(isinstance(i, bool) or not isinstance(i, int) or i < 1 for i in abonnent_ids)):
         raise FormFehler("ids_ungueltig", "abonnent_ids")
@@ -247,7 +248,7 @@ def tags_aendern(mandant: dict, abonnent_ids, hinzufuegen, entfernen) -> dict:
         raise FormFehler("tags_widerspruch", "entfernen")
     mid = int(mandant["id"])
     entfernen_klein = {t.lower() for t in rem}
-    z = {"geaendert": 0, "unveraendert": 0, "uebersprungen": {"abgemeldet": 0, "unzustellbar": 0, "unbestaetigt": 0, "unbekannt": 0, "tag_limit": 0}}
+    z = {"geaendert": 0, "unveraendert": 0, "uebersprungen": {"abgemeldet": 0, "unzustellbar": 0, "unbestaetigt": 0, "unbekannt": 0, "tag_limit": 0}, "tag_limit_teilweise": 0}
     with db.verbindung() as c:
         zeilen = {}
         for ab in range(0, len(ids), 500):
@@ -274,11 +275,13 @@ def tags_aendern(mandant: dict, abonnent_ids, hinzufuegen, entfernen) -> dict:
                     continue
                 neu.append(t)
                 bekannt.add(t.lower())
-            if limit:
-                z["uebersprungen"]["tag_limit"] += 1
             if neu != alt:
                 c.execute("UPDATE abonnent SET tags=? WHERE id=? AND mandant_id=?", (json.dumps(neu, ensure_ascii=False), i, mid))
                 z["geaendert"] += 1
+                if limit:                                           # geändert, aber ein neuer Tag passte nicht mehr (nur Hinweis, nicht Teil der Summe)
+                    z["tag_limit_teilweise"] += 1
+            elif limit:
+                z["uebersprungen"]["tag_limit"] += 1               # nichts ging wegen der 20er-Grenze
             else:
                 z["unveraendert"] += 1
     z["tags"] = tags_liste(mid)
