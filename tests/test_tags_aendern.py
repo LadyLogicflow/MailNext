@@ -102,8 +102,31 @@ class TestFunktion(BasisTags):
         z = self.aendern(m, [i, self.nr(m, "a@beispiel.de")], ["Eins", "Zwei"])
         self.assertEqual(len(self.tags(m, "b@beispiel.de")), import_csv.MAX_TAGS_JE_ADRESSE)
         self.assertEqual(self.tags(m, "b@beispiel.de")[-1], "Eins")                         # Zwei passte nicht mehr
-        self.assertEqual(z["uebersprungen"]["tag_limit"], 1)
+        self.assertEqual((z["geaendert"], z["unveraendert"], z["uebersprungen"]["tag_limit"], z["tag_limit_teilweise"]), (2, 0, 0, 1))
         self.assertEqual(self.tags(m, "a@beispiel.de"), ["Spender", "Eins", "Zwei"])         # die andere Adresse bekommt beide
+
+    def test_adresse_an_der_grenze_zaehlt_genau_einmal(self):
+        """Webys Beobachtung (Backend a6ed673): eine Adresse mit schon 20 Tags stand unter tag_limit UND unter unveraendert (3 Zähler für 2 Adressen)."""
+        m = self.vorbereiten()
+        self.tags_setzen(m, "b@beispiel.de", ["T%d" % i for i in range(20)])
+        z = self.aendern(m, [self.nr(m, "a@beispiel.de"), self.nr(m, "b@beispiel.de")], ["Neu"])
+        self.assertEqual((z["geaendert"], z["unveraendert"], z["uebersprungen"]["tag_limit"], z["tag_limit_teilweise"]), (1, 0, 1, 0))
+        self.assertEqual(z["geaendert"] + z["unveraendert"] + sum(z["uebersprungen"].values()), 2)
+
+    def test_jede_nummer_genau_einmal_in_der_summe(self):
+        m = self.vorbereiten()
+        for adresse, status in (("u@beispiel.de", "unbestaetigt"), ("z@beispiel.de", "unzustellbar"), ("w@beispiel.de", "abgemeldet")):
+            self.abo(m, adresse, status=status)
+        self.abo(m, "voll@beispiel.de")
+        self.tags_setzen(m, "voll@beispiel.de", ["T%d" % i for i in range(20)])
+        self.abo(m, "fast@beispiel.de")
+        self.tags_setzen(m, "fast@beispiel.de", ["T%d" % i for i in range(19)])
+        ids = [self.nr(m, a) for a in ("a@beispiel.de", "b@beispiel.de", "c@beispiel.de", "u@beispiel.de", "z@beispiel.de", "w@beispiel.de", "voll@beispiel.de", "fast@beispiel.de")] + [999999]
+        z = self.aendern(m, ids + ids[:3], ["Spender", "X", "Y"])                         # dazu doppelte Nummern
+        self.assertEqual(z["geaendert"] + z["unveraendert"] + sum(z["uebersprungen"].values()), len(set(ids)))
+        self.assertEqual((z["geaendert"], z["unveraendert"]), (4, 0))
+        self.assertEqual(z["uebersprungen"], {"abgemeldet": 1, "unzustellbar": 1, "unbestaetigt": 1, "unbekannt": 1, "tag_limit": 1})
+        self.assertEqual(z["tag_limit_teilweise"], 1)                                      # fast: nur X passte
 
     def test_entfernen_schafft_platz_im_selben_aufruf(self):
         m = self.vorbereiten()
@@ -156,7 +179,7 @@ class TestSchnittstelle(BasisTags):
         j = r.get_json()
         self.assertEqual(r.status_code, 200, j)
         self.assertEqual((j["geaendert"], j["unveraendert"]), (2, 0))
-        self.assertEqual(set(j), {"geaendert", "unveraendert", "uebersprungen", "tags"})
+        self.assertEqual(set(j), {"geaendert", "unveraendert", "uebersprungen", "tag_limit_teilweise", "tags"})
         self.assertNotIn("@", r.get_data(as_text=True))
         with mock.patch.object(betreiber_auth, "_bei_sortnext_fragen", return_value={"email": "catrin@bst-next.de", "betreiber": True}):
             betreiber_auth.cache_leeren()
