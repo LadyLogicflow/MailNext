@@ -231,6 +231,36 @@ def abonnenten_import(mandant_id):
     return jsonify(ergebnis)
 
 
+_TAGS_AENDERN_MELDUNG = {
+    "ids_ungueltig": "abonnent_ids muss eine Liste von 1 bis %d Nummern sein." % abonnenten.MAX_IDS_TAGS_AENDERN,
+    "tags_ungueltig": "hinzufuegen und entfernen müssen Listen mit höchstens %d Tags sein." % abonnenten.MAX_TAGS_AENDERN,
+    "tag_ungueltig": "Ein Tag ist leer, länger als 40 Zeichen oder enthält Steuerzeichen oder , ; |.",
+    "nichts_zu_tun": "Bitte mindestens einen Tag zum Hinzufügen oder Entfernen angeben.",
+    "tags_widerspruch": "Ein Tag steht bei hinzufuegen und bei entfernen.",
+}
+
+
+@bp.post("/mandanten/<int:mandant_id>/abonnenten/tags-aendern")
+@betreiber_auth.betreiber_pflicht
+def abonnenten_tags_aendern(mandant_id):
+    """Tags nachträglich vergeben/entfernen. Body: {abonnent_ids: [1-2000 Nummern], hinzufuegen: [Tags], entfernen: [Tags]}. Antwort: {geaendert, unveraendert, uebersprungen: {...}, tags}.
+    Nur bestätigte Abonnentinnen dieses Mandanten; ins Audit kommen nur Zahlen."""
+    m = _mandant_oder_404(mandant_id)
+    if m is None:
+        return jsonify({"error": "nicht_gefunden"}), 404
+    d = _json()
+    if d is None or set(d) - {"abonnent_ids", "hinzufuegen", "entfernen"}:
+        return _fehler("Bitte abonnent_ids, hinzufuegen und entfernen als JSON senden.")
+    try:
+        ergebnis = abonnenten.tags_aendern(m, d.get("abonnent_ids"), d.get("hinzufuegen"), d.get("entfernen"))
+    except abonnenten.FormFehler as f:
+        return jsonify({"error": f.code, "feld": f.feld, "meldung": _TAGS_AENDERN_MELDUNG.get(f.code, "Eingabe ungültig.")}), 400
+    _audit("tags_geaendert", "mandant=%s ids=%d hinzufuegen=%d entfernen=%d geaendert=%d unveraendert=%d uebersprungen=%d" % (
+        m["slug"], len(set(d["abonnent_ids"])), len(d.get("hinzufuegen") or []), len(d.get("entfernen") or []), ergebnis["geaendert"], ergebnis["unveraendert"],
+        sum(ergebnis["uebersprungen"].values())))
+    return jsonify(ergebnis)
+
+
 @bp.get("/mandanten/<int:mandant_id>/abonnenten/tags")
 @betreiber_auth.betreiber_pflicht
 def abonnenten_tags(mandant_id):

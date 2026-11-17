@@ -39,6 +39,17 @@ def _zelle(wert: str) -> str:
     return (wert or "").translate(UNSICHTBAR).strip().strip('"').strip("'").strip()
 
 
+def tag_pruefen(wert) -> str | None:
+    """Ein einzelner Tag aus der Oberfläche (nachträgliches Vergeben): bereinigt wie beim Import (unsichtbare Zeichen, Umrahmung), ``None`` wenn leer, länger als
+    MAX_TAG_LAENGE, mit Steuerzeichen oder mit einem der Trennzeichen , ; | (die beim Import Tags trennen würden)."""
+    if not isinstance(wert, str):
+        return None
+    t = _zelle(wert)
+    if not t or len(t) > MAX_TAG_LAENGE or any(ord(ch) < 32 or ord(ch) == 127 or ch in ",;|" for ch in t):
+        return None
+    return t
+
+
 def tags_lesen(zelle: str) -> tuple[list, int]:
     """Zerlegt die Tag-Zelle (Mailchimp: "Tag A","Tag B"; auch Semikolon oder |) in (Tags, Anzahl verworfener). Doppelte (ohne Groß-/Kleinschreibung) zählen nicht,
     zu lange (> MAX_TAG_LAENGE), Steuerzeichen und alles über MAX_TAGS_JE_ADRESSE werden verworfen."""

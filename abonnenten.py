@@ -210,6 +210,81 @@ def liste(mandant_id: int) -> list:
             for z in zeilen]
 
 
+# ----- Tags nachträglich ändern (v0.8.1-Stand, catrin #19236) -----
+
+MAX_IDS_TAGS_AENDERN = 2000
+MAX_TAGS_AENDERN = 20
+
+
+def _tags_aendern_pruefen(werte, feld) -> list:
+    if werte is None:
+        return []
+    if not isinstance(werte, list) or len(werte) > MAX_TAGS_AENDERN:
+        raise FormFehler("tags_ungueltig", feld)
+    ergebnis, gesehen = [], set()
+    for w in werte:
+        t = import_csv.tag_pruefen(w)
+        if t is None:
+            raise FormFehler("tag_ungueltig", feld)
+        if t.lower() not in gesehen:
+            gesehen.add(t.lower())
+            ergebnis.append(t)
+    return ergebnis
+
+
+def tags_aendern(mandant: dict, abonnent_ids, hinzufuegen, entfernen) -> dict:
+    """Tags vieler bestätigter Abonnentinnen dieses Mandanten gemeinsam ändern: ``hinzufuegen`` (höchstens MAX_TAGS_JE_ADRESSE je Adresse, Groß-/Kleinschreibung egal, vorhandene
+    Schreibweise bleibt) und ``entfernen``. Abgemeldete, unzustellbare, unbestätigte und fremde/unbekannte Nummern werden übersprungen und gezählt, nie verändert. Alles in einer
+    Transaktion; Antwort nur Zahlen und die neue Tag-Liste, nie Adressen. Freigegebene Versandlisten bleiben festgeschrieben (eigene Tabelle), offene Entwürfe zählen neu."""
+    if (not isinstance(abonnent_ids, list) or not 1 <= len(abonnent_ids) <= MAX_IDS_TAGS_AENDERN
+            or any(isinstance(i, bool) or not isinstance(i, int) or i < 1 for i in abonnent_ids)):
+        raise FormFehler("ids_ungueltig", "abonnent_ids")
+    ids = list(dict.fromkeys(abonnent_ids))
+    add, rem = _tags_aendern_pruefen(hinzufuegen, "hinzufuegen"), _tags_aendern_pruefen(entfernen, "entfernen")
+    if not add and not rem:
+        raise FormFehler("nichts_zu_tun", "hinzufuegen")
+    if {t.lower() for t in add} & {t.lower() for t in rem}:
+        raise FormFehler("tags_widerspruch", "entfernen")
+    mid = int(mandant["id"])
+    entfernen_klein = {t.lower() for t in rem}
+    z = {"geaendert": 0, "unveraendert": 0, "uebersprungen": {"abgemeldet": 0, "unzustellbar": 0, "unbestaetigt": 0, "unbekannt": 0, "tag_limit": 0}}
+    with db.verbindung() as c:
+        zeilen = {}
+        for ab in range(0, len(ids), 500):
+            teil = ids[ab:ab + 500]
+            for r in c.execute("SELECT id, status, tags FROM abonnent WHERE mandant_id=? AND id IN (%s)" % ",".join("?" * len(teil)), [mid] + teil):
+                zeilen[r["id"]] = r
+        for i in ids:
+            r = zeilen.get(i)
+            if r is None:
+                z["uebersprungen"]["unbekannt"] += 1
+                continue
+            if r["status"] != "bestaetigt":
+                z["uebersprungen"][r["status"] if r["status"] in z["uebersprungen"] else "unbekannt"] += 1
+                continue
+            alt = json.loads(r["tags"] or "[]")
+            neu = [t for t in alt if t.lower() not in entfernen_klein]
+            bekannt = {t.lower() for t in neu}
+            limit = False
+            for t in add:
+                if t.lower() in bekannt:
+                    continue
+                if len(neu) >= import_csv.MAX_TAGS_JE_ADRESSE:
+                    limit = True
+                    continue
+                neu.append(t)
+                bekannt.add(t.lower())
+            if limit:
+                z["uebersprungen"]["tag_limit"] += 1
+            if neu != alt:
+                c.execute("UPDATE abonnent SET tags=? WHERE id=? AND mandant_id=?", (json.dumps(neu, ensure_ascii=False), i, mid))
+                z["geaendert"] += 1
+            else:
+                z["unveraendert"] += 1
+    z["tags"] = tags_liste(mid)
+    return z
+
+
 # ----- Import von Bestandsadressen (Betreiber, Einwilligungen liegen laut Betreiber vor) -----
 
 def _tags_vereinigen(alt: list, neu: list) -> list:
