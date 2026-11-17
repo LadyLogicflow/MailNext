@@ -171,7 +171,11 @@ def in_verwendung(mandant: dict, bild_id) -> bool:
     with db.verbindung() as c:
         for z in c.execute("SELECT blocks FROM entwurf WHERE mandant_id=? AND format='layout' AND blocks IS NOT NULL", (int(mandant["id"]),)).fetchall():
             try:
-                if any(b.get("bild_id") == bild_id for b in json.loads(z["blocks"]).get("bilder", [])):
+                blocks = json.loads(z["blocks"])
+                eintraege = list(blocks.get("bilder", []))
+                if blocks.get("version") == 2:                                        # Version 2: Bildblöcke in beiden Spalten
+                    eintraege = [b for s in blocks.get("spalten", {}).values() for b in s if isinstance(b, dict) and b.get("typ") == "bild"]
+                if any(b.get("bild_id") == bild_id for b in eintraege):
                     return True
             except (ValueError, AttributeError):
                 continue

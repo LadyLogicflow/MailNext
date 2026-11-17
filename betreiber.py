@@ -12,6 +12,7 @@ import bilder
 import db
 import import_csv
 import ki
+import layout
 import mandanten
 import newsletter
 from mandanten import Ungueltig
@@ -380,7 +381,7 @@ def entwurf_vorschau(m):
     """Vorschau eines Layout-Entwurfs (noch ungespeichert): {betreff, blocks} -> {html, text, warnungen, blocks}. Speichert nichts, sendet nichts."""
     d = _json() or {}
     erg = newsletter.layout_vorschau(m, d.get("betreff"), d.get("blocks"))
-    _audit("entwurf_vorschau", "mandant=%s bilder=%d" % (m["slug"], len(erg["blocks"]["bilder"])))
+    _audit("entwurf_vorschau", "mandant=%s bilder=%d" % (m["slug"], len(layout.alle_bilder(erg["blocks"]))))
     return jsonify(erg)
 
 
