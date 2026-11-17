@@ -1252,6 +1252,24 @@ class TestLayoutV2(MN):
             self.assertTrue(z[i]["fehler"], z[i])                                                                                  # Meldung steht auch im Fehlerfeld des Formulars
         self.assertEqual(self.entwuerfe(), [])
 
+    def test_echtes_backend_bild_unbekannt_erscheint_am_richtigen_feld(self):
+        """Nur mit dem echten Backend (v0.8.0): ein gelöschtes Bild in einem gespeicherten v2-Entwurf. Der Server meldet bild_unbekannt mit seinem feld-Namen,
+        die Oberfläche muss ihn genau am Bildblock zeigen (prüft die Schreibweise der Feldnamen gegen das Backend)."""
+        import bilder, inspect, layout, newsletter
+        if "spalten" not in inspect.getsource(layout):
+            self.skipTest("braucht das echte v2-Backend")
+        m = self.vorbereiten()
+        blocks = {"version": 2, "balken": {"text": "", "url": None, "farbe": None},
+                  "spalten": {"links": [{"typ": "text", "text_html": "<p>Hallo</p>"}], "rechts": [{"typ": "bild", "bild_id": self.b2}]}}
+        newsletter.anlegen(m, "Mit Bild", None, "testliste", {}, "layout", blocks)
+        self.assertTrue(bilder.loeschen(m, self.b2))                                          # Bild weg, der Entwurf verweist noch darauf
+        o = self.ops([{"op": "oeffnen", "betreff": "Mit Bild"}, {"op": "speichern"}])
+        s = o["schritte"][1]
+        put = [b for b in s["bodies"] if b["m"] == "PUT"][0]
+        self.assertEqual(put["s"], 400)
+        self.assertEqual(list(s["zustand"]["feld_fehler"]), ["spalten.rechts[0].bild_id"])    # genau am Bildblock, nicht nur im Formularfehler
+        self.assertTrue(s["zustand"]["feld_fehler"]["spalten.rechts[0].bild_id"])
+
     def test_vorschau_zeigt_warnungen_und_sendet_v2(self):
         import newsletter
         self.vorbereiten()
