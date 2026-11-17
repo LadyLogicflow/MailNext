@@ -1785,7 +1785,16 @@ async function renderNewsletterEditor(m, entwurfId) {
             if (kiBereich) kiBereich.classList.toggle('hidden', f === 'layout');
             layoutHost.classList.toggle('hidden', f !== 'layout');
             if (f === 'layout' && !layoutUi) {
-                layoutUi = baueLayoutEditor(m, entwurf, () => betreffInput.value);
+                // Bestehende Entwürfe im alten Layout (version 1, eine Spalte) bleiben im alten Editor; neue Entwürfe nutzen zwei Spalten (version 2)
+                const altesLayout = !!(entwurf && entwurf.blocks && entwurf.blocks.version === 1);
+                layoutUi = (altesLayout ? baueLayoutEditor : baueLayoutEditorV2)(m, entwurf, () => betreffInput.value);
+                if (altesLayout) {
+                    const hinweisAlt = document.createElement('p');
+                    hinweisAlt.className = 'layout-hinweis-v1';
+                    hinweisAlt.style.color = '#6b7280';
+                    hinweisAlt.textContent = 'Dieser Entwurf nutzt das frühere Layout mit einer Spalte und bleibt so. Neue Entwürfe haben zwei Spalten.';
+                    layoutHost.appendChild(hinweisAlt);
+                }
                 layoutHost.appendChild(layoutUi.el);
                 try {
                     await layoutUi.ladeBilder();
@@ -3380,7 +3389,7 @@ const LAYOUT_ERLAUBT = new Set(['p', 'br', 'strong', 'em', 'h2', 'h3', 'ul', 'ol
 const LAYOUT_ALIAS = {b: 'strong', i: 'em', div: 'p'};
 const LAYOUT_VERWERFEN = new Set(['script', 'style', 'iframe', 'object', 'embed', 'noscript', 'template', 'textarea', 'title', 'head', 'svg', 'math', 'select', 'option']);
 const LAYOUT_BLOECKE = new Set(['p', 'h2', 'h3']);
-const LAYOUT_INLINE = new Set(['strong', 'em', 'a', 'br']);
+const LAYOUT_INLINE = new Set(['strong', 'em', 'a', 'br', 'span']);
 
 function layoutHrefOk(href) {
     const w = (href || '').trim();
@@ -3393,36 +3402,49 @@ function layoutHttpsOk(url) {
     return (url || '').trim().toLowerCase().startsWith('https://') && url.trim().length <= 300 && layoutHrefOk(url);
 }
 
-function layoutBereinige(quelle, ziel) {
+// mitFarbe (nur Layout v2): <span data-farbe="#rrggbb"> bleibt erhalten, jeder andere span wird entpackt; nie style oder class
+function layoutBereinige(quelle, ziel, mitFarbe) {
     Array.from(quelle.childNodes).forEach(n => {
         if (n.nodeType === 3) { ziel.appendChild(document.createTextNode(n.nodeValue)); return; }
         if (n.nodeType !== 1) return;
         const roh = n.tagName.toLowerCase();
         if (LAYOUT_VERWERFEN.has(roh)) return;
+        if (roh === 'span') {
+            const farbe = n.getAttribute('data-farbe');
+            if (mitFarbe && typeof farbe === 'string' && /^#[0-9a-f]{6}$/i.test(farbe)) {
+                const sp = document.createElement('span');
+                sp.setAttribute('data-farbe', farbe.toLowerCase());
+                layoutBereinige(n, sp, mitFarbe);
+                ziel.appendChild(sp);
+            } else {
+                layoutBereinige(n, ziel, mitFarbe);
+            }
+            return;
+        }
         const tag = LAYOUT_ALIAS[roh] || roh;
         if (!LAYOUT_ERLAUBT.has(tag) || (tag === 'a' && !layoutHrefOk(n.getAttribute('href')))) {
-            layoutBereinige(n, ziel);
+            layoutBereinige(n, ziel, mitFarbe);
             return;
         }
         const el = document.createElement(tag);
         if (tag === 'a') el.setAttribute('href', n.getAttribute('href').trim());
         if (LAYOUT_BLOECKE.has(tag) && n.getAttribute('data-ausrichtung') === 'zentriert') el.setAttribute('data-ausrichtung', 'zentriert');
-        layoutBereinige(n, el);
+        layoutBereinige(n, el, mitFarbe);
         ziel.appendChild(el);
     });
 }
 
-function layoutHtmlLaden(editor, html) {
+function layoutHtmlLaden(editor, html, mitFarbe) {
     const geparst = new DOMParser().parseFromString('<!doctype html><body>' + (html || ''), 'text/html');
     const tmp = document.createElement('div');
-    layoutBereinige(geparst.body, tmp);
+    layoutBereinige(geparst.body, tmp, mitFarbe);
     editor.textContent = '';
     while (tmp.firstChild) editor.appendChild(tmp.firstChild);
 }
 
-function layoutHtmlLesen(editor) {
+function layoutHtmlLesen(editor, mitFarbe) {
     const tmp = document.createElement('div');
-    layoutBereinige(editor, tmp);
+    layoutBereinige(editor, tmp, mitFarbe);
     let lauf = null;
     Array.from(tmp.childNodes).forEach(n => {
         const inline = n.nodeType === 3 || (n.nodeType === 1 && LAYOUT_INLINE.has(n.tagName.toLowerCase()));
@@ -3751,48 +3773,91 @@ function baueLayoutEditor(m, entwurf, holeBetreff) {
     };
 
     // Vorschau (Etappe 3)
-    const vorschauBereich = document.createElement('div');
-    vorschauBereich.id = 'layout-vorschau';
-    vorschauBereich.style.marginTop = '1rem';
-    const vorschauKopf = document.createElement('h4');
-    vorschauKopf.textContent = 'Vorschau';
-    vorschauBereich.appendChild(vorschauKopf);
-    const vorschauAktion = document.createElement('div');
-    const vorschauKnopf = knopf('Vorschau aktualisieren', () => vorschauLaden(), 'btn btn-secondary');
+    const zeigeClientFehler = (liste) => {
+        liste.forEach(f => fehlerZeigen(f.feld, f.meldung));
+    };
+    wurzel.appendChild(layoutVorschauBauen(m, holeBetreff, {
+        lesen: () => blocksLesen(),
+        loeschen: () => fehlerLoeschen(),
+        clientFehler: (liste) => zeigeClientFehler(liste),
+        serverFehler: (feld, meldung) => fehlerZeigen(feld, meldung),
+    }));
+
+    return {
+        el: wurzel,
+        blocksLesen,
+        fehlerLoeschen,
+        fehlerZeigen,
+        zeigeClientFehler,
+        setzeBilderListe(liste) {
+            bilderListe = liste || [];
+            platzListe.querySelectorAll('.layout-bild').forEach(p => {
+                const s = p.querySelector('.layout-bild-auswahl');
+                const gewaehlt = parseInt(s.value, 10);
+                optionenFuellen(s, Number.isNaN(gewaehlt) ? null : gewaehlt);
+                const b = bilderListe.find(x => x.id === gewaehlt);
+                const v = p.querySelector('.layout-bild-vorschau');
+                if (b) { v.src = b.url; v.alt = b.alt; v.style.display = 'block'; }
+            });
+        },
+        async ladeBilder() {
+            this.setzeBilderListe(await apiCall(`/mandanten/${m.id}/bilder`));
+        },
+    };
+}
+
+// Vorschau (Etappe 3), von v1 und v2 gemeinsam benutzt: iframe sandbox="" mit srcdoc, Warnungen, Text-Fassung.
+// cb: {lesen() -> {blocks, fehler}, loeschen(), clientFehler(liste), serverFehler(feld, meldung) -> bool}
+function layoutVorschauBauen(m, holeBetreff, cb) {
+    const bereich = document.createElement('div');
+    bereich.id = 'layout-vorschau';
+    bereich.style.marginTop = '1rem';
+    const kopf = document.createElement('h4');
+    kopf.textContent = 'Vorschau';
+    bereich.appendChild(kopf);
+    const aktion = document.createElement('div');
+    const knopf = (text, klick) => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'btn btn-secondary';
+        b.textContent = text;
+        b.addEventListener('click', klick);
+        return b;
+    };
+    const vorschauKnopf = knopf('Vorschau aktualisieren', () => laden());
     vorschauKnopf.id = 'layout-vorschau-btn';
-    vorschauAktion.appendChild(vorschauKnopf);
+    aktion.appendChild(vorschauKnopf);
     const textKnopf = knopf('Text-Fassung anzeigen', () => {
         textAnsicht.classList.toggle('hidden');
         textKnopf.textContent = textAnsicht.classList.contains('hidden') ? 'Text-Fassung anzeigen' : 'Text-Fassung ausblenden';
-    }, 'btn btn-secondary');
+    });
     textKnopf.id = 'layout-vorschau-text-btn';
     textKnopf.classList.add('hidden');
-    vorschauAktion.appendChild(document.createTextNode(' '));
-    vorschauAktion.appendChild(textKnopf);
-    vorschauBereich.appendChild(vorschauAktion);
-    const vorschauFehler = document.createElement('div');
-    vorschauFehler.id = 'layout-vorschau-fehler';
-    vorschauFehler.className = 'error hidden';
-    vorschauBereich.appendChild(vorschauFehler);
+    aktion.appendChild(document.createTextNode(' '));
+    aktion.appendChild(textKnopf);
+    bereich.appendChild(aktion);
+    const fehlerDiv = document.createElement('div');
+    fehlerDiv.id = 'layout-vorschau-fehler';
+    fehlerDiv.className = 'error hidden';
+    bereich.appendChild(fehlerDiv);
     const warnungen = document.createElement('ul');
     warnungen.id = 'layout-vorschau-warnungen';
-    vorschauBereich.appendChild(warnungen);
+    bereich.appendChild(warnungen);
     const rahmenHalter = document.createElement('div');
     rahmenHalter.id = 'layout-vorschau-halter';
-    vorschauBereich.appendChild(rahmenHalter);
+    bereich.appendChild(rahmenHalter);
     const textAnsicht = document.createElement('pre');
     textAnsicht.id = 'layout-vorschau-text';
     textAnsicht.className = 'hidden';
     textAnsicht.style.whiteSpace = 'pre-wrap';
-    vorschauBereich.appendChild(textAnsicht);
-    wurzel.appendChild(vorschauBereich);
+    bereich.appendChild(textAnsicht);
 
-    async function vorschauLaden() {
-        fehlerLoeschen();
-        vorschauFehler.classList.add('hidden');
-        const gelesen = blocksLesen();
+    async function laden() {
+        cb.loeschen();
+        fehlerDiv.classList.add('hidden');
+        const gelesen = cb.lesen();
         if (gelesen.fehler.length) {
-            zeigeClientFehler(gelesen.fehler);
+            cb.clientFehler(gelesen.fehler);
             return;
         }
         const body = {blocks: gelesen.blocks};
@@ -3821,15 +3886,544 @@ function baueLayoutEditor(m, entwurf, holeBetreff) {
             textAnsicht.textContent = erg.text || '';
             textKnopf.classList.remove('hidden');
         } catch (err) {
-            if (!err.feld || !fehlerZeigen(err.feld, err.message)) {
-                vorschauFehler.textContent = err.message;
-                vorschauFehler.classList.remove('hidden');
+            if (!err.feld || !cb.serverFehler(err.feld, err.message)) {
+                fehlerDiv.textContent = err.message;
+                fehlerDiv.classList.remove('hidden');
             }
         }
     }
-    const zeigeClientFehler = (liste) => {
-        liste.forEach(f => fehlerZeigen(f.feld, f.meldung));
+    return bereich;
+}
+
+// ===== Layout v2: zwei Spalten mit freien Blöcken (catrin #19220, Variante A) =====
+const LAYOUT2_MAX_BLOECKE = 20;
+const LAYOUT2_MAX_BILDER = 12;
+const LAYOUT2_MAX_TEXT_BLOCK = 20000;
+const LAYOUT2_MAX_TEXT_GESAMT = 60000;
+const LAYOUT2_SPALTEN = [['links', 'Linke Spalte'], ['rechts', 'Rechte Spalte']];
+const LAYOUT2_AUSRICHTUNGEN = [['links', 'Links'], ['blocksatz', 'Blocksatz'], ['zentriert', 'Zentriert']];
+
+function layoutFarbeOk(farbe) {
+    return typeof farbe === 'string' && /^#[0-9a-f]{6}$/i.test(farbe);
+}
+
+function layoutFeldFehler(feld) {
+    const d = document.createElement('div');
+    d.className = 'field-error hidden';
+    d.dataset.feld = feld;
+    return d;
+}
+
+function layoutTextfeld(id, max, platzhalter) {
+    const i = document.createElement('input');
+    i.type = 'text';
+    if (id) i.id = id;
+    i.maxLength = max;
+    if (platzhalter) i.placeholder = platzhalter;
+    return i;
+}
+
+function layoutKnopf(text, klick, klasse) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = klasse || 'btn btn-secondary';
+    b.textContent = text;
+    b.addEventListener('click', klick);
+    return b;
+}
+
+function layoutGruppe(beschriftung, inhalt, hinweis) {
+    const g = document.createElement('div');
+    g.className = 'form-group';
+    const l = document.createElement('label');
+    l.textContent = beschriftung;
+    g.appendChild(l);
+    g.appendChild(inhalt);
+    if (hinweis) {
+        const h = document.createElement('small');
+        h.textContent = hinweis;
+        g.appendChild(h);
+    }
+    return g;
+}
+
+// Farbfeld mit "Standardfarbe": solange kein Wert gewählt ist, bleibt die Farbe null (= Standard des Layouts)
+function layoutFarbWahl(beschriftung, startwert, klasse) {
+    const huelle = document.createElement('div');
+    huelle.className = 'layout-farbe ' + (klasse || '');
+    const label = document.createElement('label');
+    label.textContent = beschriftung + ' ';
+    const eingabe = document.createElement('input');
+    eingabe.type = 'color';
+    eingabe.className = 'layout-farbe-eingabe';
+    let standard = !layoutFarbeOk(startwert);
+    eingabe.value = standard ? '#000000' : startwert.toLowerCase();
+    const stand = document.createElement('small');
+    stand.className = 'layout-farbe-stand';
+    const zeigen = () => { stand.textContent = standard ? ' Standardfarbe' : ' ' + eingabe.value.toLowerCase(); };
+    const gewaehlt = () => { standard = false; zeigen(); };
+    eingabe.addEventListener('input', gewaehlt);
+    eingabe.addEventListener('change', gewaehlt);
+    const zuruecksetzen = layoutKnopf('Standardfarbe', () => { standard = true; zeigen(); }, 'btn btn-secondary btn-small layout-farbe-standard');
+    label.appendChild(eingabe);
+    huelle.appendChild(label);
+    huelle.appendChild(stand);
+    huelle.appendChild(document.createTextNode(' '));
+    huelle.appendChild(zuruecksetzen);
+    zeigen();
+    return {
+        el: huelle,
+        lesen: () => (standard ? null : eingabe.value.toLowerCase()),
+        gueltig: () => standard || layoutFarbeOk(eingabe.value),
     };
+}
+
+// Formatleiste eines Textblocks: nur erlaubte Tags; Farbe für markierte Stellen als span data-farbe (nie style)
+function layoutFormatleisteV2(editor, meldeFehler) {
+    const leiste = document.createElement('div');
+    leiste.className = 'layout-leiste';
+    leiste.setAttribute('role', 'toolbar');
+    leiste.style.display = 'flex';
+    leiste.style.flexWrap = 'wrap';
+    leiste.style.gap = '0.25rem';
+    leiste.style.marginBottom = '0.5rem';
+
+    const imEditor = (knoten) => !!knoten && editor.contains(knoten);
+    const fokussieren = () => {
+        const sel = document.getSelection();
+        if (!(sel && imEditor(sel.anchorNode))) editor.focus();
+    };
+    const befehl = (name, arg) => {
+        fokussieren();
+        if (typeof document.execCommand === 'function') document.execCommand(name, false, arg);
+    };
+    const blockVon = (knoten) => {
+        while (knoten && knoten !== editor && !(knoten.nodeType === 1 && LAYOUT_BLOECKE.has(knoten.tagName.toLowerCase()))) knoten = knoten.parentNode;
+        return knoten && knoten !== editor ? knoten : null;
+    };
+    const zentrieren = () => {
+        const sel = document.getSelection();
+        let block = blockVon(sel && imEditor(sel.anchorNode) ? sel.anchorNode : null);
+        fokussieren();
+        if (!block) {
+            befehl('formatBlock', 'p');
+            const danach = document.getSelection();
+            block = blockVon(danach && imEditor(danach.anchorNode) ? danach.anchorNode : null);
+        }
+        if (!block) return;
+        if (block.getAttribute('data-ausrichtung') === 'zentriert') block.removeAttribute('data-ausrichtung');
+        else block.setAttribute('data-ausrichtung', 'zentriert');
+    };
+    const markierung = () => {
+        const sel = document.getSelection();
+        return sel && sel.rangeCount > 0 && !sel.isCollapsed && imEditor(sel.anchorNode) && imEditor(sel.focusNode) ? sel : null;
+    };
+
+    const linkEingabe = layoutTextfeld(null, 500, 'https://... oder mailto:...');
+    linkEingabe.className = 'layout-link-url';
+    const farbeEingabe = document.createElement('input');
+    farbeEingabe.type = 'color';
+    farbeEingabe.className = 'layout-markierung-farbe';
+    farbeEingabe.value = '#b91c1c';
+
+    [
+        ['Fett', () => befehl('bold')],
+        ['Kursiv', () => befehl('italic')],
+        ['Absatz', () => befehl('formatBlock', 'p')],
+        ['Überschrift 2', () => befehl('formatBlock', 'h2')],
+        ['Überschrift 3', () => befehl('formatBlock', 'h3')],
+        ['Liste', () => befehl('insertUnorderedList')],
+        ['Nummerierte Liste', () => befehl('insertOrderedList')],
+        ['Zentriert', zentrieren],
+        ['Link setzen', () => {
+            if (!layoutHrefOk(linkEingabe.value)) {
+                meldeFehler('Link: nur https:// oder mailto: erlaubt');
+                return;
+            }
+            meldeFehler('');
+            befehl('createLink', linkEingabe.value.trim());
+        }],
+        ['Link entfernen', () => befehl('unlink')],
+        ['Markierung färben', () => {
+            const sel = markierung();
+            if (!sel) { meldeFehler('Bitte zuerst eine Textstelle markieren.'); return; }
+            const farbe = (farbeEingabe.value || '').toLowerCase();
+            if (!layoutFarbeOk(farbe)) { meldeFehler('Farbe ungültig (nur #rrggbb).'); return; }
+            meldeFehler('');
+            const bereich = sel.getRangeAt(0);
+            const span = document.createElement('span');
+            span.setAttribute('data-farbe', farbe);
+            span.appendChild(bereich.extractContents());
+            bereich.insertNode(span);
+            sel.removeAllRanges();
+            const neu = document.createRange();
+            neu.selectNodeContents(span);
+            sel.addRange(neu);
+        }],
+        ['Markierungsfarbe entfernen', () => {
+            const sel = markierung();
+            if (!sel) { meldeFehler('Bitte zuerst eine Textstelle markieren.'); return; }
+            meldeFehler('');
+            const bereich = sel.getRangeAt(0);
+            Array.from(editor.querySelectorAll('span[data-farbe]')).forEach(sp => {
+                if (!bereich.intersectsNode(sp)) return;
+                while (sp.firstChild) sp.parentNode.insertBefore(sp.firstChild, sp);
+                sp.remove();
+            });
+        }],
+    ].forEach(([text, aktion]) => {
+        const b = layoutKnopf(text, aktion, 'btn btn-secondary btn-small');
+        b.addEventListener('mousedown', e => e.preventDefault());
+        leiste.appendChild(b);
+    });
+    leiste.appendChild(linkEingabe);
+    leiste.appendChild(farbeEingabe);
+    return leiste;
+}
+
+function baueLayoutEditorV2(m, entwurf, holeBetreff) {
+    const wurzel = document.createElement('div');
+    wurzel.id = 'layout-gruppe';
+    wurzel.dataset.version = '2';
+    let bilderListe = [];
+    const daten = entwurf && entwurf.blocks && entwurf.blocks.version === 2 ? entwurf.blocks : null;
+    const balkenDaten = (daten && daten.balken) || {};
+
+    const kopf = document.createElement('h4');
+    kopf.textContent = 'Layout (zwei Spalten)';
+    wurzel.appendChild(kopf);
+
+    // Balken: Text, Link, Farbe des Titels
+    const balkenText = layoutTextfeld('layout-balken-text', 60);
+    balkenText.value = balkenDaten.text || '';
+    const balkenGruppeText = layoutGruppe('Balken: Text (optional)', balkenText, '0-60 Zeichen');
+    balkenGruppeText.appendChild(layoutFeldFehler('balken.text'));
+    wurzel.appendChild(balkenGruppeText);
+    const balkenUrl = layoutTextfeld('layout-balken-url', 300, 'https://...');
+    balkenUrl.value = balkenDaten.url || '';
+    const balkenGruppeUrl = layoutGruppe('Balken: Link (optional)', balkenUrl, 'nur https://');
+    balkenGruppeUrl.appendChild(layoutFeldFehler('balken.url'));
+    wurzel.appendChild(balkenGruppeUrl);
+    const balkenFarbe = layoutFarbWahl('Balken: Farbe des Titels', balkenDaten.farbe, 'layout-balken-farbe');
+    const balkenGruppeFarbe = document.createElement('div');
+    balkenGruppeFarbe.className = 'form-group';
+    balkenGruppeFarbe.appendChild(balkenFarbe.el);
+    balkenGruppeFarbe.appendChild(layoutFeldFehler('balken.farbe'));
+    wurzel.appendChild(balkenGruppeFarbe);
+
+    // Zwei Spalten
+    const spaltenBox = document.createElement('div');
+    spaltenBox.style.display = 'grid';
+    spaltenBox.style.gridTemplateColumns = 'repeat(auto-fit, minmax(320px, 1fr))';
+    spaltenBox.style.gap = '1rem';
+    const spalten = {};
+    LAYOUT2_SPALTEN.forEach(([seite, titel]) => {
+        const box = document.createElement('div');
+        box.id = 'spalte-' + seite;
+        box.className = 'layout-spalte';
+        box.style.border = '1px solid var(--color-border)';
+        box.style.borderRadius = '6px';
+        box.style.padding = '0.75rem';
+        const ueberschrift = document.createElement('h4');
+        ueberschrift.textContent = titel;
+        box.appendChild(ueberschrift);
+        const liste = document.createElement('div');
+        liste.className = 'layout-spalte-liste';
+        box.appendChild(liste);
+        box.appendChild(layoutFeldFehler('spalten.' + seite));
+        const zeile = document.createElement('div');
+        zeile.style.margin = '0.5rem 0';
+        const addText = layoutKnopf('+ Text', () => neuerBlock(seite, 'text', {}), 'btn btn-secondary layout-add-text');
+        const addBild = layoutKnopf('+ Bild', () => neuerBlock(seite, 'bild', {}), 'btn btn-secondary layout-add-bild');
+        const zaehler = document.createElement('small');
+        zaehler.className = 'layout-spalte-zaehler';
+        zeile.appendChild(addText);
+        zeile.appendChild(document.createTextNode(' '));
+        zeile.appendChild(addBild);
+        zeile.appendChild(document.createTextNode(' '));
+        zeile.appendChild(zaehler);
+        box.appendChild(zeile);
+        spaltenBox.appendChild(box);
+        spalten[seite] = {box, liste, addText, addBild, zaehler};
+    });
+    wurzel.appendChild(spaltenBox);
+    const bilderZaehler = document.createElement('small');
+    bilderZaehler.id = 'layout-bilder-zaehler';
+    bilderZaehler.style.display = 'block';
+    bilderZaehler.style.marginTop = '0.5rem';
+    wurzel.appendChild(bilderZaehler);
+    wurzel.appendChild(layoutFeldFehler('spalten'));
+
+    const bloecke = (seite) => Array.from(spalten[seite].liste.children).filter(c => c.classList.contains('layout-block'));
+    const bilderGesamt = () => LAYOUT2_SPALTEN.reduce((n, [s]) => n + bloecke(s).filter(b => b.dataset.typ === 'bild').length, 0);
+
+    const aktualisieren = () => {
+        const bilder = bilderGesamt();
+        LAYOUT2_SPALTEN.forEach(([seite]) => {
+            const alle = bloecke(seite);
+            alle.forEach((b, i) => {
+                b.querySelector('.layout-block-titel').textContent = (b.dataset.typ === 'text' ? 'Text ' : 'Bild ') + (i + 1);
+                b.querySelectorAll('[data-teil]').forEach(d => { d.dataset.feld = `spalten.${seite}[${i}]` + (d.dataset.teil ? '.' + d.dataset.teil : ''); });
+                b.querySelector('.layout-block-hoch').disabled = i === 0;
+                b.querySelector('.layout-block-runter').disabled = i === alle.length - 1;
+            });
+            const s = spalten[seite];
+            s.addText.disabled = alle.length >= LAYOUT2_MAX_BLOECKE;
+            s.addBild.disabled = alle.length >= LAYOUT2_MAX_BLOECKE || bilder >= LAYOUT2_MAX_BILDER;
+            s.zaehler.textContent = `Blöcke: ${alle.length} von ${LAYOUT2_MAX_BLOECKE}`;
+        });
+        bilderZaehler.textContent = `Bilder: ${bilder} von ${LAYOUT2_MAX_BILDER}`;
+    };
+
+    const teilFehler = (teil) => {
+        const d = layoutFeldFehler('');
+        d.dataset.teil = teil;
+        return d;
+    };
+    const blockHuelle = (seite, typ) => {
+        const el = document.createElement('div');
+        el.className = 'layout-block';
+        el.dataset.typ = typ;
+        el.style.border = '1px solid var(--color-border)';
+        el.style.borderRadius = '6px';
+        el.style.padding = '0.5rem';
+        el.style.margin = '0.5rem 0';
+        el.style.background = '#fff';
+        const kopfzeile = document.createElement('div');
+        kopfzeile.style.display = 'flex';
+        kopfzeile.style.gap = '0.25rem';
+        kopfzeile.style.alignItems = 'center';
+        const titel = document.createElement('strong');
+        titel.className = 'layout-block-titel';
+        titel.style.flex = '1';
+        kopfzeile.appendChild(titel);
+        const hoch = layoutKnopf('Hoch', () => {
+            const davor = el.previousElementSibling;
+            if (davor) spalten[seite].liste.insertBefore(el, davor);
+            aktualisieren();
+        }, 'btn btn-secondary btn-small layout-block-hoch');
+        const runter = layoutKnopf('Runter', () => {
+            const danach = el.nextElementSibling;
+            if (danach) spalten[seite].liste.insertBefore(danach, el);
+            aktualisieren();
+        }, 'btn btn-secondary btn-small layout-block-runter');
+        const loeschen = layoutKnopf('Löschen', () => { el.remove(); aktualisieren(); }, 'btn btn-secondary btn-small layout-block-loeschen');
+        kopfzeile.appendChild(hoch);
+        kopfzeile.appendChild(runter);
+        kopfzeile.appendChild(loeschen);
+        el.appendChild(kopfzeile);
+        el.appendChild(teilFehler(''));
+        return el;
+    };
+
+    const optionenFuellen = (select, gewaehlt) => {
+        select.textContent = '';
+        const leer = document.createElement('option');
+        leer.value = '';
+        leer.textContent = 'Bild wählen...';
+        select.appendChild(leer);
+        let gefunden = gewaehlt === null || gewaehlt === undefined;
+        bilderListe.forEach(b => {
+            const o = document.createElement('option');
+            o.value = String(b.id);
+            o.textContent = b.alt + ' (#' + b.id + ')';
+            if (b.id === gewaehlt) { o.selected = true; gefunden = true; }
+            select.appendChild(o);
+        });
+        if (!gefunden) {
+            const o = document.createElement('option');
+            o.value = String(gewaehlt);
+            o.textContent = 'Bild #' + gewaehlt;
+            o.selected = true;
+            select.appendChild(o);
+        }
+    };
+
+    function textBlock(seite, d) {
+        const el = blockHuelle(seite, 'text');
+        const editor = document.createElement('div');
+        editor.className = 'layout-block-text';
+        editor.setAttribute('contenteditable', 'true');
+        editor.setAttribute('role', 'textbox');
+        editor.setAttribute('aria-multiline', 'true');
+        editor.setAttribute('aria-label', 'Text');
+        editor.style.minHeight = '6rem';
+        editor.style.padding = '0.5rem';
+        editor.style.border = '1px solid var(--color-border)';
+        editor.style.borderRadius = '4px';
+        editor.style.background = '#fff';
+        layoutHtmlLaden(editor, d.text_html || '', true);
+        const fehlerText = teilFehler('text_html');
+        const melde = (t) => { fehlerText.textContent = t || ''; fehlerText.classList.toggle('hidden', !t); };
+        el.appendChild(layoutFormatleisteV2(editor, melde));
+        el.appendChild(editor);
+        el.appendChild(fehlerText);
+
+        const ausrichtung = document.createElement('select');
+        ausrichtung.className = 'layout-block-ausrichtung';
+        LAYOUT2_AUSRICHTUNGEN.forEach(([wert, text]) => {
+            const o = document.createElement('option');
+            o.value = wert;
+            o.textContent = text;
+            ausrichtung.appendChild(o);
+        });
+        ausrichtung.value = LAYOUT2_AUSRICHTUNGEN.some(([w]) => w === d.ausrichtung) ? d.ausrichtung : 'links';
+        const gAusr = layoutGruppe('Ausrichtung', ausrichtung);
+        gAusr.appendChild(teilFehler('ausrichtung'));
+        el.appendChild(gAusr);
+        const farbe = layoutFarbWahl('Textfarbe', d.farbe, 'layout-block-farbe');
+        const gFarbe = document.createElement('div');
+        gFarbe.className = 'form-group';
+        gFarbe.appendChild(farbe.el);
+        gFarbe.appendChild(teilFehler('farbe'));
+        el.appendChild(gFarbe);
+
+        el._lesen = (pfad, fehler) => {
+            const gelesen = layoutHtmlLesen(editor, true);
+            if (!gelesen.text) fehler.push({feld: pfad + '.text_html', meldung: 'Der Text darf nicht leer sein'});
+            if (gelesen.html.length > LAYOUT2_MAX_TEXT_BLOCK) fehler.push({feld: pfad + '.text_html', meldung: `Der Text ist zu lang (höchstens ${LAYOUT2_MAX_TEXT_BLOCK} Zeichen)`});
+            if (!farbe.gueltig()) fehler.push({feld: pfad + '.farbe', meldung: 'Farbe ungültig (nur #rrggbb)'});
+            return {block: {typ: 'text', text_html: gelesen.html, ausrichtung: ausrichtung.value, farbe: farbe.gueltig() ? farbe.lesen() : null}, textLaenge: gelesen.html.length};
+        };
+        return el;
+    }
+
+    function bildBlock(seite, d) {
+        const el = blockHuelle(seite, 'bild');
+        const select = document.createElement('select');
+        select.className = 'layout-bild-auswahl';
+        optionenFuellen(select, d.bild_id);
+        const vorschau = document.createElement('img');
+        vorschau.className = 'layout-bild-vorschau';
+        vorschau.style.maxWidth = '120px';
+        vorschau.style.display = 'block';
+        vorschau.style.marginTop = '0.5rem';
+        const alt = layoutTextfeld(null, 150);
+        alt.className = 'layout-bild-alt';
+        alt.value = d.alt || '';
+        const bildZeigen = () => {
+            const b = bilderListe.find(x => String(x.id) === select.value);
+            if (b) { vorschau.src = b.url; vorschau.alt = b.alt; vorschau.style.display = 'block'; alt.placeholder = 'leer = ' + b.alt; }
+            else { vorschau.removeAttribute('src'); vorschau.style.display = 'none'; alt.placeholder = 'leer = Alternativtext des Bildes'; }
+        };
+        select.addEventListener('change', bildZeigen);
+        const unterschrift = layoutTextfeld(null, 200);
+        unterschrift.className = 'layout-bild-unterschrift';
+        unterschrift.value = d.bildunterschrift || '';
+        const url = layoutTextfeld(null, 300, 'https://...');
+        url.className = 'layout-bild-url';
+        url.value = d.url || '';
+        const farbe = layoutFarbWahl('Untertitelfarbe', d.bildunterschrift_farbe, 'layout-bild-farbe');
+
+        const gSelect = layoutGruppe('Bild *', select);
+        gSelect.appendChild(vorschau);
+        gSelect.appendChild(teilFehler('bild_id'));
+        el.appendChild(gSelect);
+        const gAlt = layoutGruppe('Alternativtext (optional, leer = Text des Bildes)', alt);
+        gAlt.appendChild(teilFehler('alt'));
+        el.appendChild(gAlt);
+        const gUnter = layoutGruppe('Bildunterschrift (optional, 0-200 Zeichen)', unterschrift);
+        gUnter.appendChild(teilFehler('bildunterschrift'));
+        el.appendChild(gUnter);
+        const gFarbe = document.createElement('div');
+        gFarbe.className = 'form-group';
+        gFarbe.appendChild(farbe.el);
+        gFarbe.appendChild(teilFehler('bildunterschrift_farbe'));
+        el.appendChild(gFarbe);
+        const gUrl = layoutGruppe('Link (optional, nur https://)', url);
+        gUrl.appendChild(teilFehler('url'));
+        el.appendChild(gUrl);
+        bildZeigen();
+
+        el._lesen = (pfad, fehler) => {
+            const id = parseInt(select.value, 10);
+            const a = alt.value.trim();
+            const u = unterschrift.value.trim();
+            const l = url.value.trim();
+            if (Number.isNaN(id)) fehler.push({feld: pfad + '.bild_id', meldung: 'Bitte ein Bild wählen'});
+            if (a.length > 150) fehler.push({feld: pfad + '.alt', meldung: 'Alternativtext: höchstens 150 Zeichen'});
+            if (u.length > 200) fehler.push({feld: pfad + '.bildunterschrift', meldung: 'Bildunterschrift: höchstens 200 Zeichen'});
+            if (!farbe.gueltig()) fehler.push({feld: pfad + '.bildunterschrift_farbe', meldung: 'Farbe ungültig (nur #rrggbb)'});
+            if (l && !layoutHttpsOk(l)) fehler.push({feld: pfad + '.url', meldung: 'Der Link muss eine https-Adresse sein'});
+            return {block: {typ: 'bild', bild_id: Number.isNaN(id) ? null : id, alt: a, bildunterschrift: u, bildunterschrift_farbe: farbe.gueltig() ? farbe.lesen() : null, url: l || null}, textLaenge: 0};
+        };
+        return el;
+    }
+
+    function neuerBlock(seite, typ, d) {
+        if (bloecke(seite).length >= LAYOUT2_MAX_BLOECKE) return null;
+        if (typ === 'bild' && bilderGesamt() >= LAYOUT2_MAX_BILDER) return null;
+        const el = typ === 'bild' ? bildBlock(seite, d) : textBlock(seite, d);
+        spalten[seite].liste.appendChild(el);
+        aktualisieren();
+        return el;
+    }
+    if (daten && daten.spalten) {
+        LAYOUT2_SPALTEN.forEach(([seite]) => {
+            (daten.spalten[seite] || []).forEach(b => {
+                if (b && (b.typ === 'text' || b.typ === 'bild')) neuerBlock(seite, b.typ, b);
+            });
+        });
+    }
+    aktualisieren();
+
+    // Fehleranzeige am Feld; ohne genauen Treffer wird von hinten gekürzt (…[i].teil, …[i], Spalte, spalten)
+    const fehlerLoeschen = () => {
+        wurzel.querySelectorAll('[data-feld]').forEach(d => { d.textContent = ''; d.classList.add('hidden'); });
+        wurzel.querySelectorAll('[aria-invalid]').forEach(e => e.removeAttribute('aria-invalid'));
+    };
+    const fehlerZeigen = (feld, meldung) => {
+        const alle = Array.from(wurzel.querySelectorAll('[data-feld]'));
+        let f = (feld || '').replace(/^blocks\./, '');
+        while (f) {
+            const d = alle.find(x => x.dataset.feld === f);
+            if (d) {
+                d.textContent = meldung;
+                d.classList.remove('hidden');
+                const eingabe = d.previousElementSibling;
+                if (eingabe && /^(INPUT|SELECT)$/.test(eingabe.tagName)) eingabe.setAttribute('aria-invalid', 'true');
+                return true;
+            }
+            const kuerzer = f.replace(/(\.[A-Za-z_0-9]+|\[\d+\])$/, '');
+            if (kuerzer === f) break;
+            f = kuerzer;
+        }
+        return false;
+    };
+    const zeigeClientFehler = (liste) => { liste.forEach(f => fehlerZeigen(f.feld, f.meldung)); };
+
+    const blocksLesen = () => {
+        const fehler = [];
+        const bt = balkenText.value.trim();
+        const bu = balkenUrl.value.trim();
+        if (bt.length > 60) fehler.push({feld: 'balken.text', meldung: 'Der Balkentext darf höchstens 60 Zeichen haben'});
+        if (bu && !layoutHttpsOk(bu)) fehler.push({feld: 'balken.url', meldung: 'Der Link muss eine https-Adresse sein'});
+        if (!balkenFarbe.gueltig()) fehler.push({feld: 'balken.farbe', meldung: 'Farbe ungültig (nur #rrggbb)'});
+        const ergebnis = {links: [], rechts: []};
+        let gesamt = 0;
+        let textGesamt = 0;
+        LAYOUT2_SPALTEN.forEach(([seite]) => {
+            bloecke(seite).forEach((b, i) => {
+                const gelesen = b._lesen(`spalten.${seite}[${i}]`, fehler);
+                ergebnis[seite].push(gelesen.block);
+                textGesamt += gelesen.textLaenge;
+                gesamt++;
+            });
+        });
+        if (gesamt === 0) fehler.push({feld: 'spalten', meldung: 'Bitte mindestens einen Block anlegen'});
+        if (textGesamt > LAYOUT2_MAX_TEXT_GESAMT) fehler.push({feld: 'spalten', meldung: `Alle Texte zusammen sind zu lang (höchstens ${LAYOUT2_MAX_TEXT_GESAMT} Zeichen)`});
+        return {
+            blocks: {version: 2, balken: {text: bt, url: bu || null, farbe: balkenFarbe.gueltig() ? balkenFarbe.lesen() : null}, spalten: ergebnis},
+            fehler,
+        };
+    };
+
+    wurzel.appendChild(layoutVorschauBauen(m, holeBetreff, {
+        lesen: () => blocksLesen(),
+        loeschen: () => fehlerLoeschen(),
+        clientFehler: (liste) => zeigeClientFehler(liste),
+        serverFehler: (feld, meldung) => fehlerZeigen(feld, meldung),
+    }));
 
     return {
         el: wurzel,
@@ -3839,13 +4433,10 @@ function baueLayoutEditor(m, entwurf, holeBetreff) {
         zeigeClientFehler,
         setzeBilderListe(liste) {
             bilderListe = liste || [];
-            platzListe.querySelectorAll('.layout-bild').forEach(p => {
-                const s = p.querySelector('.layout-bild-auswahl');
+            wurzel.querySelectorAll('.layout-bild-auswahl').forEach(s => {
                 const gewaehlt = parseInt(s.value, 10);
                 optionenFuellen(s, Number.isNaN(gewaehlt) ? null : gewaehlt);
-                const b = bilderListe.find(x => x.id === gewaehlt);
-                const v = p.querySelector('.layout-bild-vorschau');
-                if (b) { v.src = b.url; v.alt = b.alt; v.style.display = 'block'; }
+                s.dispatchEvent(new Event('change'));
             });
         },
         async ladeBilder() {

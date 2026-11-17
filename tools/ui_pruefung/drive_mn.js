@@ -510,6 +510,140 @@ async function main() {
       out.schritte.push({op, zustand: sicht(vor)});
     }
   }
+  if (arg.szenario === 'layout2') {
+    await klick('Newsletter');
+    await sleep(800);
+    win.__cmds = [];
+    doc.execCommand = (name, ui, wert) => { win.__cmds.push([name, wert === undefined ? null : wert]); return true; };
+    const sichtbarEl = (el) => !!el && !el.classList.contains('hidden');
+    const block = (seite, i) => doc.querySelectorAll(`#spalte-${seite} .layout-block`)[i];
+    const stand = (huelle) => huelle ? huelle.querySelector('.layout-farbe-stand').textContent.trim() : null;
+    const blockSicht = (b) => {
+      const typ = b.dataset.typ;
+      const o = {typ, titel: b.querySelector('.layout-block-titel').textContent, hoch_gesperrt: b.querySelector('.layout-block-hoch').disabled, runter_gesperrt: b.querySelector('.layout-block-runter').disabled};
+      if (typ === 'text') {
+        o.text_html = b.querySelector('.layout-block-text').innerHTML;
+        o.ausrichtung = b.querySelector('.layout-block-ausrichtung').value;
+        o.farbe = stand(b.querySelector('.layout-block-farbe'));
+        o.leiste = [...b.querySelectorAll('.layout-leiste button')].map(x => x.textContent.trim());
+      } else {
+        o.bild_id = b.querySelector('.layout-bild-auswahl').value;
+        o.alt = b.querySelector('.layout-bild-alt').value;
+        o.alt_platzhalter = b.querySelector('.layout-bild-alt').placeholder;
+        o.unterschrift = b.querySelector('.layout-bild-unterschrift').value;
+        o.farbe = stand(b.querySelector('.layout-bild-farbe'));
+        o.url = b.querySelector('.layout-bild-url').value;
+      }
+      return o;
+    };
+    const sicht = () => {
+      const rahmen = doc.getElementById('layout-vorschau-frame');
+      const link = doc.getElementById('ansicht-link');
+      const wurzel = doc.getElementById('layout-gruppe');
+      const spalte = (seite) => doc.getElementById('spalte-' + seite);
+      return {
+        version: wurzel ? (wurzel.dataset.version || null) : null,
+        hinweis_v1: doc.querySelector('.layout-hinweis-v1') ? doc.querySelector('.layout-hinweis-v1').textContent : null,
+        format: [...doc.querySelectorAll('input[name="format"]')].map(r => ({wert: r.value, aktiv: r.checked, gesperrt: r.disabled})),
+        text_gruppe_sichtbar: sichtbarEl(doc.getElementById('text-gruppe')),
+        layout_sichtbar: !!wurzel && sichtbarEl(doc.getElementById('layout-host')),
+        balken: wurzel && wurzel.dataset.version === '2' ? {text: doc.getElementById('layout-balken-text').value, url: doc.getElementById('layout-balken-url').value, farbe: stand(doc.querySelector('.layout-balken-farbe'))} : null,
+        spalten: Object.fromEntries(['links', 'rechts'].map(s => [s, spalte(s) ? [...spalte(s).querySelectorAll('.layout-block')].map(blockSicht) : null])),
+        spalten_titel: ['links', 'rechts'].map(s => spalte(s) ? spalte(s).querySelector('h4').textContent : null),
+        spalten_zaehler: Object.fromEntries(['links', 'rechts'].map(s => [s, spalte(s) ? spalte(s).querySelector('.layout-spalte-zaehler').textContent : null])),
+        add: Object.fromEntries(['links', 'rechts'].map(s => [s, spalte(s) ? {text: spalte(s).querySelector('.layout-add-text').textContent, text_gesperrt: spalte(s).querySelector('.layout-add-text').disabled, bild: spalte(s).querySelector('.layout-add-bild').textContent, bild_gesperrt: spalte(s).querySelector('.layout-add-bild').disabled} : null])),
+        bilder_zaehler: doc.getElementById('layout-bilder-zaehler') ? doc.getElementById('layout-bilder-zaehler').textContent : null,
+        feld_fehler: Object.fromEntries([...doc.querySelectorAll('#layout-gruppe [data-feld]')].filter(d => !d.classList.contains('hidden')).map(d => [d.dataset.feld, d.textContent])),
+        markiert: doc.querySelectorAll('#layout-gruppe [aria-invalid]').length,
+        fehler: sichtbarFehler(),
+        vorschau: {
+          rahmen: !!rahmen, sandbox: rahmen ? rahmen.getAttribute('sandbox') : null, hat_allow: rahmen ? rahmen.hasAttribute('allow') : null,
+          srcdoc: rahmen ? rahmen.getAttribute('srcdoc') : null,
+          warnungen: [...doc.querySelectorAll('#layout-vorschau-warnungen li')].map(li => li.textContent),
+          text_knopf: sichtbarEl(doc.getElementById('layout-vorschau-text-btn')),
+          text_sichtbar: doc.getElementById('layout-vorschau-text') ? sichtbarEl(doc.getElementById('layout-vorschau-text')) : null,
+          text: doc.getElementById('layout-vorschau-text') ? doc.getElementById('layout-vorschau-text').textContent : null,
+          fehler: sichtbarEl(doc.getElementById('layout-vorschau-fehler')) ? doc.getElementById('layout-vorschau-fehler').textContent : null,
+        },
+        ansicht: link ? {href: link.getAttribute('href'), target: link.getAttribute('target'), rel: link.getAttribute('rel')} : null,
+        speichern_gesperrt: doc.querySelector('#newsletter-form button[type=submit]') ? doc.querySelector('#newsletter-form button[type=submit]').disabled : null,
+        liste: [...doc.querySelectorAll('#main tbody tr')].map(tr => [...tr.querySelectorAll('td')].map(td => td.textContent.trim())),
+        befehle: win.__cmds.slice(),
+        betreff: doc.getElementById('newsletter-betreff') ? doc.getElementById('newsletter-betreff').value : null,
+        toast: toastText(),
+      };
+    };
+    const farbe = (huelle, wert) => {
+      if (wert === null) { [...huelle.querySelectorAll('button')].find(b => b.textContent.trim() === 'Standardfarbe').click(); return; }
+      const e = huelle.querySelector('.layout-farbe-eingabe');
+      e.value = wert; e.dispatchEvent(new win.Event('input', {bubbles: true}));
+    };
+    out.start = sicht();
+    out.schritte = [];
+    for (const op of arg.ops || []) {
+      const vor = requests.length;
+      if (op.op === 'neu') { await klick('Neuer Entwurf'); await sleep(600); }
+      if (op.op === 'oeffnen') {
+        const zeile = [...doc.querySelectorAll('#main tbody tr')].find(tr => tr.textContent.includes(op.betreff));
+        if (!zeile) throw new Error('Entwurf nicht in der Liste: ' + op.betreff);
+        zeile.click(); await sleep(1300);
+      }
+      if (op.op === 'format') {
+        const r = [...doc.querySelectorAll('input[name="format"]')].find(x => x.value === op.wert);
+        r.checked = true; r.dispatchEvent(new win.Event('change', {bubbles: true})); await sleep(900);
+      }
+      if (op.op === 'betreff') doc.getElementById('newsletter-betreff').value = op.wert;
+      if (op.op === 'balken') {
+        if (op.text !== undefined) doc.getElementById('layout-balken-text').value = op.text;
+        if (op.url !== undefined) doc.getElementById('layout-balken-url').value = op.url;
+        if (op.farbe !== undefined) farbe(doc.querySelector('.layout-balken-farbe'), op.farbe);
+      }
+      if (op.op === 'add') {
+        for (let n = 0; n < (op.anzahl || 1); n++) doc.querySelector(`#spalte-${op.spalte} .layout-add-${op.typ}`).click();
+      }
+      if (op.op === 'add_erzwungen') { const b = doc.querySelector(`#spalte-${op.spalte} .layout-add-${op.typ}`); b.disabled = false; b.click(); }
+      if (op.op === 'text') {
+        const b = block(op.spalte, op.index);
+        const editor = b.querySelector('.layout-block-text');
+        if (op.html !== undefined) editor.innerHTML = op.html;
+        if (op.laden !== undefined) win.layoutHtmlLaden(editor, op.laden, true);
+        if (op.ausrichtung !== undefined) { const s = b.querySelector('.layout-block-ausrichtung'); s.value = op.ausrichtung; s.dispatchEvent(new win.Event('change', {bubbles: true})); }
+        if (op.farbe !== undefined) farbe(b.querySelector('.layout-block-farbe'), op.farbe);
+      }
+      if (op.op === 'bild') {
+        const b = block(op.spalte, op.index);
+        if (op.bild_id !== undefined) { const s = b.querySelector('.layout-bild-auswahl'); s.value = String(op.bild_id); s.dispatchEvent(new win.Event('change', {bubbles: true})); }
+        if (op.alt !== undefined) b.querySelector('.layout-bild-alt').value = op.alt;
+        if (op.unterschrift !== undefined) b.querySelector('.layout-bild-unterschrift').value = op.unterschrift;
+        if (op.url !== undefined) b.querySelector('.layout-bild-url').value = op.url;
+        if (op.farbe !== undefined) farbe(b.querySelector('.layout-bild-farbe'), op.farbe);
+      }
+      if (op.op === 'hoch') block(op.spalte, op.index).querySelector('.layout-block-hoch').click();
+      if (op.op === 'runter') block(op.spalte, op.index).querySelector('.layout-block-runter').click();
+      if (op.op === 'loeschen') block(op.spalte, op.index).querySelector('.layout-block-loeschen').click();
+      if (op.op === 'auswahl') {
+        const b = block(op.spalte, op.index);
+        const ziel = b.querySelector('.layout-block-text ' + (op.selektor || ''));
+        const r = doc.createRange();
+        if (op.ganz) r.selectNodeContents(ziel); else { r.setStart(ziel.firstChild || ziel, 0); r.collapse(true); }
+        const s = doc.getSelection(); s.removeAllRanges(); s.addRange(r);
+      }
+      if (op.op === 'leiste') {
+        const b = block(op.spalte, op.index);
+        [...b.querySelectorAll('.layout-leiste button')].find(x => x.textContent.trim() === op.knopf).click();
+      }
+      if (op.op === 'link_url') block(op.spalte, op.index).querySelector('.layout-link-url').value = op.wert;
+      if (op.op === 'markierungsfarbe') block(op.spalte, op.index).querySelector('.layout-markierung-farbe').value = op.wert;
+      if (op.op === 'vorschau') { await klick('Vorschau aktualisieren'); await sleep(900); }
+      if (op.op === 'text_fassung') await klick(op.knopf || 'Text-Fassung anzeigen');
+      if (op.op === 'speichern') {
+        doc.getElementById('newsletter-form').dispatchEvent(new win.Event('submit', {bubbles: true, cancelable: true}));
+        await sleep(op.warte || 1500);
+      }
+      const neu = requests.slice(vor);
+      out.schritte.push({op, requests: neu.map(r => `${r.m} ${r.p} ${r.s}`), bodies: neu.filter(r => r.body).map(r => ({m: r.m, p: r.p, s: r.s, body: r.body})), zustand: sicht()});
+    }
+  }
   out.toast = toastText();
   out.fehler_js = fehler.slice(0, 5);
   return out;
