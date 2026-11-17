@@ -127,6 +127,17 @@ def _aufraeumen(verz) -> None:
 _LETZTER = threading.local()
 
 
+def fehler_kurz(exc: BaseException) -> str:
+    """Kurzbeschreibung eines Versandfehlers für Log und Antwort: Klassenname, bei Betriebssystemfehlern (OSError und Unterklassen wie ConnectionRefusedError, gaierror) zusätzlich
+    ``[Errno <Nummer>: <Systemtext>]`` (z. B. OSError[Errno 101: Network is unreachable]). Nie Servertext, Adresse oder Dateipfad: SMTP-/TLS-Fehler bekommen nur den Namen
+    (deren Text kann Servernamen oder Zertifikatsangaben enthalten), der Systemtext wird auf druckbare Zeichen und 80 Zeichen begrenzt; ``filename`` wird nie benutzt."""
+    name = type(exc).__name__
+    if isinstance(exc, (smtplib.SMTPException, ssl.SSLError)) or not isinstance(exc, OSError) or exc.errno is None:
+        return name
+    text = "".join(ch for ch in str(exc.strerror or "") if ch.isprintable())[:80]
+    return "%s[Errno %s%s]" % (name, exc.errno, ": " + text if text else "")
+
+
 def letzter_fehlertyp() -> str | None:
     """Name der Ausnahme (ohne Meldungstext, ohne Adresse) des letzten ``senden``-Aufrufs dieses Threads, wenn er 'fehler' ergab, sonst ``None``.
     Hilft der Oberfläche, die Ursache zu nennen (z. B. SMTPAuthenticationError), ohne dass Einzelheiten des Servers nach außen gehen."""
@@ -168,6 +179,6 @@ def senden(mandant: dict, an: str, betreff: str, text: str, html_text: str, head
     except smtplib.SMTPRecipientsRefused:                                          # harte Ablehnung der Adresse: dauerhaft unzustellbar
         return "abgelehnt"
     except Exception as exc:
-        LOG.warning("Mailversand fehlgeschlagen (Mandant %s, %s)", mandant["slug"], type(exc).__name__)
-        _LETZTER.typ = type(exc).__name__
+        _LETZTER.typ = fehler_kurz(exc)
+        LOG.warning("Mailversand fehlgeschlagen (Mandant %s, %s)", mandant["slug"], _LETZTER.typ)
         return "fehler"

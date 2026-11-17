@@ -154,5 +154,58 @@ class TestTestmailSmtp(Basis):
         self.assertIn("(fehler)", r["meldung"])
 
 
+class TestFehlerKurz(Basis):
+    """Diagnose (v0.8.1-Stand, catrin #19155): bei Betriebssystemfehlern nennt die Meldung errno und Systemtext, nie Servertext, Adresse oder Pfad."""
+
+    def kurz(self, exc):
+        return mailer.fehler_kurz(exc)
+
+    def test_betriebssystemfehler_mit_errno_und_systemtext(self):
+        self.assertEqual(self.kurz(OSError(101, "Network is unreachable")), "OSError[Errno 101: Network is unreachable]")
+        self.assertEqual(self.kurz(OSError(113, "No route to host")), "OSError[Errno 113: No route to host]")
+        self.assertEqual(self.kurz(OSError(24, "Too many open files")), "OSError[Errno 24: Too many open files]")
+        self.assertEqual(self.kurz(ConnectionRefusedError(111, "Connection refused")), "ConnectionRefusedError[Errno 111: Connection refused]")
+        self.assertEqual(self.kurz(mailer.smtplib.socket.gaierror(-2, "Name or service not known")), "gaierror[Errno -2: Name or service not known]")
+
+    def test_smtp_und_tls_fehler_nur_mit_namen(self):
+        self.assertEqual(self.kurz(mailer.smtplib.SMTPAuthenticationError(535, b"geheimer-servertext")), "SMTPAuthenticationError")
+        self.assertEqual(self.kurz(mailer.smtplib.SMTPServerDisconnected("x")), "SMTPServerDisconnected")
+        self.assertEqual(self.kurz(mailer.ssl.SSLError(1, "[SSL: CERTIFICATE_VERIFY_FAILED] certificate for geheim.example")), "SSLError")
+        self.assertEqual(self.kurz(mailer.ssl.SSLCertVerificationError(1, "Hostname mismatch geheim.example")), "SSLCertVerificationError")
+
+    def test_ohne_errno_oder_kein_oserror_nur_name(self):
+        self.assertEqual(self.kurz(TimeoutError("x")), "TimeoutError")
+        self.assertEqual(self.kurz(OSError("nur text")), "OSError")
+        self.assertEqual(self.kurz(ValueError("x")), "ValueError")
+
+    def test_kein_pfad_keine_adresse_kein_steuerzeichen_und_begrenzt(self):
+        k = self.kurz(FileNotFoundError(2, "No such file or directory", "/data/geheim/a@beispiel.de"))
+        self.assertEqual(k, "FileNotFoundError[Errno 2: No such file or directory]")
+        self.assertNotIn("/data", k)
+        self.assertNotIn("@", k)
+        self.assertLessEqual(len(self.kurz(OSError(5, "x" * 500))), len("OSError[Errno 5: ]") + 80)
+        self.assertEqual(self.kurz(OSError(5, "a\nb\x00c")), "OSError[Errno 5: abc]")                   # Steuerzeichen raus
+
+    def test_in_der_testmail_antwort_und_im_log(self):
+        m, ids = self.start(1)
+        mandanten.versand_setzen(m["id"], {"versandmodus": "smtp", "smtp_host": "smtp.beispiel.test", "smtp_port": 587, "smtp_benutzer": "news@hilo.test",
+                                           "smtp_passwort": "geheim-test", "smtp_verschluesselung": "starttls"}, "test")
+        newsletter.testliste_setzen(m, ["a@beispiel.de", "b@beispiel.de"])
+        e = newsletter.anlegen(m, "Betreff", "Text", "testliste", None)
+
+        class Netz(FalscherSmtp):
+            def __init__(self, *a, **k):
+                raise OSError(101, "Network is unreachable")
+        with mock.patch.object(mailer.smtplib, "SMTP", Netz), self.assertLogs(mailer.LOG, level="WARNING") as log:
+            with self.assertRaises(newsletter.Fehler) as ctx:
+                newsletter.testmail(mandanten.lesen(m["id"]), e["id"])
+        self.assertIn("(OSError[Errno 101: Network is unreachable])", ctx.exception.meldung)
+        self.assertEqual(ctx.exception.status, 409)
+        self.assertTrue(any("OSError[Errno 101: Network is unreachable]" in z for z in log.output))
+        for nie in ("a@beispiel.de", "geheim-test", "smtp.beispiel.test"):
+            self.assertNotIn(nie, ctx.exception.meldung)
+            self.assertFalse(any(nie in z for z in log.output), nie)
+
+
 if __name__ == "__main__":
     unittest.main()
