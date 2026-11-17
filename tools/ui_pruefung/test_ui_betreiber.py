@@ -1026,8 +1026,7 @@ class TestLayout(MN):
 
 
 class TestLayoutV2(MN):
-    """Newsletter-Layout Version 2 (catrin #19220, Variante A): zwei Spalten mit freien Blöcken. Solange das Backend v0.8.0 (version 2) nicht auf main ist, ersetzt
-    backend_v2() die Prüfung durch eine Durchreiche der Form; die Fehlertests patchen unabhängig davon. Mit dem echten Backend läuft alles ohne Stellvertreter."""
+    """Newsletter-Layout Version 2 (catrin #19220, Variante A): zwei Spalten mit freien Blöcken, gegen das echte Backend (ab v0.8.0)."""
 
     def vorbereiten(self):
         import bilder
@@ -1036,40 +1035,6 @@ class TestLayoutV2(MN):
         self.b1 = bilder.speichern(m, png(groesse=(100, 60)), "Logo klein")["id"]
         self.b2 = bilder.speichern(m, png(groesse=(80, 80), farbe=(200, 30, 30, 255)), "Rotes Bild")["id"]
         return m
-
-    def backend_v2(self):
-        import contextlib, inspect, layout, newsletter
-        if "spalten" in inspect.getsource(layout):
-            return contextlib.nullcontext()
-        orig_pruefen, orig_vorschau = newsletter._blocks_pruefen, newsletter.layout_vorschau
-
-        def pruefen(mandant, blocks):
-            if not (isinstance(blocks, dict) and blocks.get("version") == 2):
-                return orig_pruefen(mandant, blocks)
-            sauber = {"version": 2, "balken": {"text": blocks["balken"].get("text", ""), "url": blocks["balken"].get("url"), "farbe": blocks["balken"].get("farbe")}, "spalten": {}}
-            texte = []
-            for seite in ("links", "rechts"):
-                liste = []
-                for b in blocks["spalten"][seite]:
-                    b = dict(b)
-                    if b["typ"] == "text":
-                        b.setdefault("ausrichtung", "links")
-                        b.setdefault("farbe", None)
-                        texte.append(re.sub(r"<[^>]+>", " ", b["text_html"]).strip())
-                    liste.append(b)
-                sauber["spalten"][seite] = liste
-            return sauber, " ".join(t for t in texte if t) or "Layout"
-
-        def vorschau(mandant, betreff, blocks):
-            if not (isinstance(blocks, dict) and blocks.get("version") == 2):
-                return orig_vorschau(mandant, betreff, blocks)
-            sauber, klartext = pruefen(mandant, blocks)
-            return {"html": "<html><body><p>%s</p></body></html>" % klartext, "text": klartext, "warnungen": [], "blocks": sauber}
-
-        stack = contextlib.ExitStack()
-        stack.enter_context(mock.patch.object(newsletter, "_blocks_pruefen", pruefen))
-        stack.enter_context(mock.patch.object(newsletter, "layout_vorschau", vorschau))
-        return stack
 
     def ops(self, ops):
         o = self.node(szenario="layout2", mandant_name="HILO e. V.", ops=ops)
@@ -1129,13 +1094,12 @@ class TestLayoutV2(MN):
 
     def test_gesendetes_v2_schema_und_farbe_null_bei_standard(self):
         self.vorbereiten()
-        with self.backend_v2():
-            o = self.ops(self.neu(
-                {"op": "balken", "text": "Titel", "url": "https://example.org/b"},
-                {"op": "add", "spalte": "links", "typ": "text"}, {"op": "text", "spalte": "links", "index": 0, "html": "<p>Hallo <b>Welt</b></p>", "ausrichtung": "blocksatz", "farbe": "#336699"},
-                {"op": "add", "spalte": "links", "typ": "bild"}, {"op": "bild", "spalte": "links", "index": 1, "bild_id": self.b1, "unterschrift": "U", "url": "https://example.org/i"},
-                {"op": "add", "spalte": "rechts", "typ": "text"}, {"op": "text", "spalte": "rechts", "index": 0, "html": "<p>R</p>", "farbe": "#112233"},
-                {"op": "text", "spalte": "rechts", "index": 0, "farbe": None}, {"op": "speichern"}))
+        o = self.ops(self.neu(
+            {"op": "balken", "text": "Titel", "url": "https://example.org/b"},
+            {"op": "add", "spalte": "links", "typ": "text"}, {"op": "text", "spalte": "links", "index": 0, "html": "<p>Hallo <b>Welt</b></p>", "ausrichtung": "blocksatz", "farbe": "#336699"},
+            {"op": "add", "spalte": "links", "typ": "bild"}, {"op": "bild", "spalte": "links", "index": 1, "bild_id": self.b1, "unterschrift": "U", "url": "https://example.org/i"},
+            {"op": "add", "spalte": "rechts", "typ": "text"}, {"op": "text", "spalte": "rechts", "index": 0, "html": "<p>R</p>", "farbe": "#112233"},
+            {"op": "text", "spalte": "rechts", "index": 0, "farbe": None}, {"op": "speichern"}))
         s = o["schritte"][-1]
         post = [b for b in s["bodies"] if b["m"] == "POST" and b["p"].endswith("/entwuerfe")][0]
         self.assertEqual(post["s"], 201)
@@ -1161,10 +1125,9 @@ class TestLayoutV2(MN):
 
     def test_balken_und_untertitelfarbe_werden_gesendet_ungueltige_nicht(self):
         self.vorbereiten()
-        with self.backend_v2():
-            o = self.ops(self.neu({"op": "balken", "text": "T", "farbe": "#0b2545"},
-                                  {"op": "add", "spalte": "links", "typ": "bild"}, {"op": "bild", "spalte": "links", "index": 0, "bild_id": self.b2, "farbe": "#FF0000"},
-                                  {"op": "speichern"}))
+        o = self.ops(self.neu({"op": "balken", "text": "T", "farbe": "#0b2545"},
+                              {"op": "add", "spalte": "links", "typ": "bild"}, {"op": "bild", "spalte": "links", "index": 0, "bild_id": self.b2, "farbe": "#FF0000"},
+                              {"op": "speichern"}))
         post = [b for b in o["schritte"][-1]["bodies"] if b["m"] == "POST" and b["p"].endswith("/entwuerfe")][0]
         blocks = post["body"]["blocks"]
         self.assertEqual(blocks["balken"]["farbe"], "#0b2545")
@@ -1176,12 +1139,11 @@ class TestLayoutV2(MN):
 
     def test_markierung_faerbt_ueber_span_data_farbe_nie_style(self):
         self.vorbereiten()
-        with self.backend_v2():
-            o = self.ops(self.neu(
-                {"op": "add", "spalte": "links", "typ": "text"}, {"op": "text", "spalte": "links", "index": 0, "html": "<p>Hallo Welt</p>"},
-                {"op": "leiste", "spalte": "links", "index": 0, "knopf": "Markierung färben"},
-                {"op": "auswahl", "spalte": "links", "index": 0, "selektor": "p", "ganz": True}, {"op": "markierungsfarbe", "spalte": "links", "index": 0, "wert": "#c0392b"},
-                {"op": "leiste", "spalte": "links", "index": 0, "knopf": "Markierung färben"}, {"op": "speichern"}))
+        o = self.ops(self.neu(
+            {"op": "add", "spalte": "links", "typ": "text"}, {"op": "text", "spalte": "links", "index": 0, "html": "<p>Hallo Welt</p>"},
+            {"op": "leiste", "spalte": "links", "index": 0, "knopf": "Markierung färben"},
+            {"op": "auswahl", "spalte": "links", "index": 0, "selektor": "p", "ganz": True}, {"op": "markierungsfarbe", "spalte": "links", "index": 0, "wert": "#c0392b"},
+            {"op": "leiste", "spalte": "links", "index": 0, "knopf": "Markierung färben"}, {"op": "speichern"}))
         z = [x["zustand"] for x in o["schritte"]]
         self.assertIn("markieren", z[5]["feld_fehler"]["spalten.links[0].text_html"])           # ohne Markierung: Hinweis am Feld, nichts verändert
         self.assertEqual(z[5]["spalten"]["links"][0]["text_html"], "<p>Hallo Welt</p>")
@@ -1253,11 +1215,9 @@ class TestLayoutV2(MN):
         self.assertEqual(self.entwuerfe(), [])
 
     def test_echtes_backend_bild_unbekannt_erscheint_am_richtigen_feld(self):
-        """Nur mit dem echten Backend (v0.8.0): ein gelöschtes Bild in einem gespeicherten v2-Entwurf. Der Server meldet bild_unbekannt mit seinem feld-Namen,
+        """Ein gelöschtes Bild in einem gespeicherten v2-Entwurf. Der Server meldet bild_unbekannt mit seinem feld-Namen,
         die Oberfläche muss ihn genau am Bildblock zeigen (prüft die Schreibweise der Feldnamen gegen das Backend)."""
-        import bilder, inspect, layout, newsletter
-        if "spalten" not in inspect.getsource(layout):
-            self.skipTest("braucht das echte v2-Backend")
+        import bilder, newsletter
         m = self.vorbereiten()
         blocks = {"version": 2, "balken": {"text": "", "url": None, "farbe": None},
                   "spalten": {"links": [{"typ": "text", "text_html": "<p>Hallo</p>"}], "rechts": [{"typ": "bild", "bild_id": self.b2}]}}
@@ -1299,9 +1259,8 @@ class TestLayoutV2(MN):
                   "spalten": {"links": [{"typ": "text", "text_html": '<p>Hallo <span data-farbe="#336699">Welt</span></p>', "ausrichtung": "zentriert", "farbe": "#112233"},
                                         {"typ": "bild", "bild_id": self.b1, "alt": "Eigener Alt", "bildunterschrift": "Unten", "bildunterschrift_farbe": "#ff0000", "url": "https://example.org/i"}],
                               "rechts": [{"typ": "text", "text_html": "<p>R</p>", "ausrichtung": "links", "farbe": None}]}}
-        with self.backend_v2():
-            newsletter.anlegen(m, "V2-Entwurf", None, "testliste", {}, "layout", blocks)
-            o = self.ops([{"op": "oeffnen", "betreff": "V2-Entwurf"}, {"op": "balken", "text": "Geändert"}, {"op": "speichern"}])
+        newsletter.anlegen(m, "V2-Entwurf", None, "testliste", {}, "layout", blocks)
+        o = self.ops([{"op": "oeffnen", "betreff": "V2-Entwurf"}, {"op": "balken", "text": "Geändert"}, {"op": "speichern"}])
         offen = o["schritte"][0]["zustand"]
         self.assertEqual(offen["version"], "2")
         self.assertTrue(all(r["gesperrt"] for r in offen["format"]))
