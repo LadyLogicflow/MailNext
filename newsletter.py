@@ -138,14 +138,16 @@ def _warnungen(mandant: dict, blocks: dict) -> list:
     if not mailer._basis(mandant).startswith("https://"):
         w.append("Die Basis-Adresse (%s) ist nicht https: Bilder und Links funktionieren in echten Mails nur, wenn sie von außen erreichbar ist." % mailer._basis(mandant))
     import bilder
+    import layout
     summe = 0
-    for b in blocks.get("bilder") or []:
+    for b in layout.alle_bilder(blocks):
         info = bilder.lesen(mandant, b["bild_id"])
         summe += info["groesse_bytes"] if info else 0
     if summe > 1_500_000:
         w.append("Die Bilder sind zusammen %.1f MB groß; das kann das Laden der Mail verlangsamen." % (summe / 1_000_000))
     if not (blocks.get("balken") or {}).get("text"):
         w.append("Es ist kein Balken gesetzt.")
+    w.extend(layout.kontrast_warnungen(mandant, blocks))
     return w
 
 

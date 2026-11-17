@@ -1,6 +1,7 @@
 """Formatierter Text für Newsletter: erlaubte HTML-Teilmenge (Allowlist), serverseitig bereinigt, ohne Bibliothek.
 
-Erlaubt sind p, br, strong (auch b), em (auch i), h2, h3, ul, ol, li und a mit href (https oder mailto). Zentrierung steht als Attribut
+Erlaubt sind p, br, strong (auch b), em (auch i), h2, h3, ul, ol, li, a mit href (https oder mailto) und (ab 0.8.0) span mit ``data-farbe="#rrggbb"`` für markierte
+Stellen in einer Textfarbe (nur ein exakt gültiger Hex-Wert, ohne ihn entfällt das span und der Text bleibt). Zentrierung steht als Attribut
 ``data-ausrichtung="zentriert"`` an p, h2 und h3. Alles andere wird entfernt: Skripte und Stile samt Inhalt, alle übrigen Tags nur als Hülle (der Text bleibt),
 Attribute (Stil, Klasse, Ereignis-Handler, ...) immer, Bilder im Text, Kommentare, Verarbeitungsanweisungen. Die Ausgabe ist die KANONISCHE Fassung und wird
 gespeichert; ``rendern`` macht daraus das mail-taugliche HTML mit Inline-Stilen, ``als_text`` den Klartext-Teil. Nie Roh-HTML des Betreibers in der Mail."""
@@ -14,11 +15,18 @@ MAX_HREF = 500
 
 BLOECKE = ("p", "h2", "h3")
 LISTEN = ("ul", "ol")
-INLINE = ("strong", "em", "a")
+INLINE = ("strong", "em", "a", "span")
 ALIAS = {"b": "strong", "i": "em"}
 ERLAUBT = set(BLOECKE) | set(LISTEN) | set(INLINE) | {"li", "br"}
 MIT_INHALT_ENTFERNEN = {"script", "style", "iframe", "object", "embed", "noscript", "template", "textarea", "title", "head", "svg", "math", "select", "option"}
 AUSRICHTUNG = "data-ausrichtung"
+FARBE = "data-farbe"
+_HEX = re.compile(r"^#[0-9a-fA-F]{6}$")
+
+
+def hex_farbe(wert) -> str | None:
+    """Exakt ``#rrggbb`` (Groß-/Kleinschreibung egal) -> kleingeschrieben, sonst ``None``. Nie Namen, rgb(), Kurzformen, Stilangaben."""
+    return wert.strip().lower() if isinstance(wert, str) and _HEX.match(wert.strip()) else None
 
 
 def href_pruefen(wert) -> str | None:
@@ -41,6 +49,7 @@ class _Bereiniger(HTMLParser):
         self.stack: list = []                     # offene erlaubte Tags
         self.verwerfen = 0                        # Tiefe in Tags, deren Inhalt entfällt
         self.in_a = False
+        self.span_ignoriert = 0                   # span ohne gültige Farbe: nur die Hülle entfällt, sein Schluss-Tag darf kein äußeres span schließen
 
     # --- Hilfen ---
     def _oeffne(self, tag, attribute=""):
@@ -118,6 +127,16 @@ class _Bereiniger(HTMLParser):
             if any(t in BLOECKE or t == "li" for t in self.stack):
                 self.in_a = True
                 self._oeffne("a", ' href="%s"' % html.escape(ziel, quote=True))
+        elif tag == "span":
+            farbe = hex_farbe(werte.get(FARBE))
+            if farbe is None:
+                self.span_ignoriert += 1
+                return
+            self._absatz_sicherstellen()
+            if any(t in BLOECKE or t == "li" for t in self.stack):
+                self._oeffne("span", ' %s="%s"' % (FARBE, farbe))
+            else:
+                self.span_ignoriert += 1
         else:                                                         # strong, em
             self._absatz_sicherstellen()
             if any(t in BLOECKE or t == "li" for t in self.stack):
@@ -130,6 +149,9 @@ class _Bereiniger(HTMLParser):
                 self.verwerfen -= 1
             return
         if self.verwerfen or tag not in ERLAUBT or tag == "br":
+            return
+        if tag == "span" and self.span_ignoriert:
+            self.span_ignoriert -= 1
             return
         if tag in self.stack:
             self._schliesse_bis(tag)
@@ -171,6 +193,7 @@ def bereinigen(eingabe) -> str:
     for _ in range(MAX_TIEFE + 2):                                    # leere Hüllen bis nichts mehr übrig ist (auch verschachtelt)
         vorher = ergebnis
         ergebnis = re.sub(r"<(p|h2|h3)( data-ausrichtung=\"zentriert\")?>(\s|<br>)*</\1>", "", ergebnis)      # leere Absätze
+        ergebnis = re.sub(r"<span data-farbe=\"#[0-9a-f]{6}\">(\s|<br>)*</span>", "", ergebnis)                     # leere Farbmarkierungen
         ergebnis = re.sub(r"<li>(\s|<br>)*</li>", "", ergebnis)
         ergebnis = re.sub(r"<(ul|ol)>\s*</\1>", "", ergebnis)
         if ergebnis == vorher:
@@ -226,12 +249,20 @@ def als_text(sauber: str) -> str:
     return re.sub(r"\n{3,}", "\n\n", text).strip()
 
 
-def rendern(sauber: str, farbe_link: str, farbe_ueberschrift: str) -> str:
-    """Mail-taugliches HTML (nur Inline-Stile) aus der bereinigten Fassung. Eingabe MUSS bereinigt sein (``bereinigen``)."""
+AUSRICHTUNGEN = {"links": "", "blocksatz": "text-align:justify;", "zentriert": "text-align:center;"}
+
+
+def rendern(sauber: str, farbe_link: str, farbe_ueberschrift: str, ausrichtung: str | None = None, farbe: str | None = None) -> str:
+    """Mail-taugliches HTML (nur Inline-Stile) aus der bereinigten Fassung. Eingabe MUSS bereinigt sein (``bereinigen``).
+    ``ausrichtung`` (links|blocksatz|zentriert) und ``farbe`` (#rrggbb, nur geprüfte Werte) gelten für den ganzen Block; die Stile entstehen hier, nie aus Client-Angaben."""
+    ausr = AUSRICHTUNGEN.get(ausrichtung or "links", "")
+    farbe = hex_farbe(farbe)
+    textfarbe = "color:%s;" % farbe if farbe else ""
+    ueberschrift = farbe or farbe_ueberschrift
     stile = {
-        "p": "margin:0 0 14px;line-height:1.55;", "h2": "margin:0 0 12px;font-size:22px;line-height:1.3;color:%s;" % farbe_ueberschrift,
-        "h3": "margin:0 0 10px;font-size:18px;line-height:1.3;color:%s;" % farbe_ueberschrift,
-        "ul": "margin:0 0 14px;padding-left:22px;", "ol": "margin:0 0 14px;padding-left:22px;", "li": "margin:0 0 6px;line-height:1.5;",
+        "p": "margin:0 0 14px;line-height:1.55;" + ausr + textfarbe, "h2": "margin:0 0 12px;font-size:22px;line-height:1.3;color:%s;%s" % (ueberschrift, ausr),
+        "h3": "margin:0 0 10px;font-size:18px;line-height:1.3;color:%s;%s" % (ueberschrift, ausr),
+        "ul": "margin:0 0 14px;padding-left:22px;" + textfarbe, "ol": "margin:0 0 14px;padding-left:22px;" + textfarbe, "li": "margin:0 0 6px;line-height:1.5;" + ausr + textfarbe,
     }
     ausgabe = []
 
@@ -246,6 +277,8 @@ def rendern(sauber: str, farbe_link: str, farbe_ueberschrift: str) -> str:
                 ausgabe.append('<%s style="%s%s">' % (tag, stile[tag], zentriert))
             elif tag == "a":
                 ausgabe.append('<a href="%s" style="color:%s;text-decoration:underline;">' % (html.escape(werte.get("href", ""), quote=True), farbe_link))
+            elif tag == "span":
+                ausgabe.append('<span style="color:%s;">' % (hex_farbe(werte.get(FARBE)) or "inherit"))
             else:
                 ausgabe.append("<%s>" % tag)
 

@@ -50,6 +50,15 @@ Die Mail (`layout.py`) ist ein Tabellen-Layout mit 600 px: Kopf mit Logo, Balken
 Dunkelmodus per color-scheme. Der Inhalts-Hash der Freigabe bindet die Blöcke und Bild-Nummern ein (Textentwürfe behalten ihren bisherigen Hash). Bilder, die ein Entwurf nutzt, lassen sich nicht löschen (409).
 Fehlercodes mit `feld`: blocks_ungueltig, bild_unbekannt, zu_viele_bilder, alt_fehlt, url_ungueltig, format_passt_nicht, format_ungueltig.
 
+## Layout-Newsletter Version 2 (ab 0.8.0)
+`blocks` mit `version: 2`: `{balken: {text ≤60, url|null, farbe "#rrggbb"|null}, spalten: {links: [Block…], rechts: [Block…]}}` (beide Listen Pflicht, mindestens ein Block gesamt). Textblock
+`{typ: "text", text_html, ausrichtung: "links"|"blocksatz"|"zentriert", farbe: "#rrggbb"|null}`, Bildblock `{typ: "bild", bild_id, alt (leer = aus dem Bild), bildunterschrift ≤200,
+bildunterschrift_farbe, url (https)}`; frei gemischt, Reihenfolge je Spalte = Listenreihenfolge. Grenzen: 20 Blöcke je Spalte, 12 Bilder, 60 000 Zeichen Text gesamt (20 000 je Block).
+Farben nur als exakter Hex-Wert (sonst 400 `farbe_ungueltig`), im Text per `<span data-farbe="#rrggbb">`; Stile entstehen nur beim Rendern, nie aus Client-Angaben. Fehlercodes:
+`blocks_ungueltig`, `zu_viele_bloecke`, `zu_viele_bilder`, `bild_unbekannt`, `alt_fehlt`, `url_ungueltig`, `farbe_ungueltig`, `ausrichtung_ungueltig`, `block_typ_ungueltig` mit `feld`
+(z. B. `spalten.links[0].farbe`). Die Vorschau liefert zusätzlich Kontrasthinweise (`warnungen`, Verhältnis unter 4,5 : 1, nur Hinweis). Darstellung: zwei gleich breite Spalten
+(600 px), mobil untereinander (links, dann rechts), leere Spalte = volle Breite; Klartext: Balken, linke Spalte, rechte Spalte. Version 1 bleibt unverändert.
+
 ## Vorschau und "Im Browser ansehen" (ab 0.6.2)
 `POST /api/v1/betreiber/mandanten/<id>/entwuerfe/vorschau` mit `{betreff?, blocks}` liefert `{html, text, warnungen, blocks}`: das echte Mail-HTML (dieselbe Funktion wie Testmail und Versand) und den
 Klartext-Teil; es wird nichts gespeichert oder gesendet. Die Oberfläche zeigt `html` in einem iframe mit leerem `sandbox` (kein Skript). Warnungen (Texte): kein Logo, fehlende Firmenangaben/Impressum, Basis-Adresse nicht https,
