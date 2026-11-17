@@ -2350,7 +2350,10 @@ function abonnentTagsErgebnis(erg, art, tag) {
     if (ueb.abgemeldet) gruende.push(`${ueb.abgemeldet} abgemeldet`);
     if (ueb.unzustellbar) gruende.push(`${ueb.unzustellbar} unzustellbar`);
     if (ueb.unbekannt) gruende.push(`${ueb.unbekannt} unbekannt`);
-    return gruende.length ? `${text} (${gruende.join(', ')})` : text;
+    if (gruende.length) text += ` (${gruende.join(', ')})`;
+    // nur Hinweis, nicht Teil der Summe: bei diesen Adressen passte nicht jeder neue Tag in die 20er-Grenze
+    if (erg.tag_limit_teilweise > 0) text += `; bei ${erg.tag_limit_teilweise} ${erg.tag_limit_teilweise === 1 ? 'Adresse' : 'Adressen'} passte nicht jeder neue Tag`;
+    return text;
 }
 
 async function renderAbonnenten(m) {

@@ -1560,9 +1560,33 @@ class TestTagsAendern(MN):
         with db.verbindung() as c:
             c.execute("UPDATE abonnent SET tags=? WHERE email='a@example.org'", (json.dumps(["T%d" % i for i in range(20)]),))
         o = self.ops([{"op": "alle"}, {"op": "tag", "wert": "Einundzwanzig"}, {"op": "hinzufuegen"}])
-        self.assertEqual(o["schritte"][2]["zustand"]["toast"], "Tag „Einundzwanzig“ hinzugefügt: 1 geändert, 1 unverändert, 1 übersprungen (1 wegen Tag-Limit (höchstens 20 je Adresse))")
+        self.assertEqual(o["schritte"][2]["zustand"]["toast"], "Tag „Einundzwanzig“ hinzugefügt: 1 geändert, 0 unverändert, 1 übersprungen (1 wegen Tag-Limit (höchstens 20 je Adresse))")
         self.assertEqual(len(self.tags_in_db("a@example.org")), 20)
         self.assertEqual(self.tags_in_db("b@example.org")[-1], "Einundzwanzig")
+
+    def test_zaehlung_summe_ist_die_adresszahl_und_tag_limit_teilweise_wird_angezeigt(self):
+        self.vorbereiten()
+        with db.verbindung() as c:
+            c.execute("UPDATE abonnent SET tags=? WHERE email='a@example.org'", (json.dumps(["T%d" % i for i in range(20)]),))
+        o = self.ops([{"op": "alle"}, {"op": "tag", "wert": "Neu"}, {"op": "hinzufuegen"}])
+        toast = o["schritte"][2]["zustand"]["toast"]
+        zahlen = [int(z) for z in re.findall(r"(\d+) (?:geändert|unverändert|übersprungen)", toast)]
+        self.assertEqual(sum(zahlen), 2)                                                            # jede Adresse genau einmal: 2 gewählt, Summe 2
+        self.assertEqual(zahlen, [1, 0, 1])
+        self.assertNotIn("passte nicht jeder", toast)                                               # bei einem Tag je Aufruf kann das nicht vorkommen
+        antwort = {"geaendert": 3, "unveraendert": 1, "uebersprungen": {"abgemeldet": 0, "unzustellbar": 0, "unbestaetigt": 0, "unbekannt": 0, "tag_limit": 0},
+                   "tag_limit_teilweise": 2, "tags": []}
+        with mock.patch.object(abonnenten, "tags_aendern", return_value=antwort):
+            o = self.ops([{"op": "alle"}, {"op": "tag", "wert": "Neu"}, {"op": "hinzufuegen"}])
+        self.assertEqual(o["schritte"][2]["zustand"]["toast"], "Tag „Neu“ hinzugefügt: 3 geändert, 1 unverändert, 0 übersprungen; bei 2 Adressen passte nicht jeder neue Tag")
+        antwort["tag_limit_teilweise"] = 1
+        with mock.patch.object(abonnenten, "tags_aendern", return_value=antwort):
+            o = self.ops([{"op": "alle"}, {"op": "tag", "wert": "Neu"}, {"op": "entfernen"}])
+        self.assertTrue(o["schritte"][2]["zustand"]["toast"].endswith("bei 1 Adresse passte nicht jeder neue Tag"))
+        antwort["tag_limit_teilweise"] = 0
+        with mock.patch.object(abonnenten, "tags_aendern", return_value=antwort):
+            o = self.ops([{"op": "alle"}, {"op": "tag", "wert": "Neu"}, {"op": "hinzufuegen"}])
+        self.assertNotIn("passte nicht jeder", o["schritte"][2]["zustand"]["toast"])               # bei 0 nichts anzeigen
 
     def test_tag_text_wird_live_geprueft_und_sperrt_die_knoepfe(self):
         self.vorbereiten()
